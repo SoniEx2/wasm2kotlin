@@ -456,6 +456,13 @@ if (BUILD_TOOLS)
     INSTALL
   )
 
+  # wasm2java
+  wabt_executable(
+    NAME wasm2java
+    SOURCES src/tools/wasm2java.cc src/java-writer.cc
+    INSTALL
+  )
+
   # wasm-opcodecnt
   wabt_executable(
     NAME wasm-opcodecnt

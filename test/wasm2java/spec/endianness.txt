@@ -1,0 +1,5 @@
+;;; TOOL: run-spec-wasm2java
+;;; STDIN_FILE: third_party/testsuite/endianness.wast
+(;; STDOUT ;;;
+68/68 tests passed.
+;;; STDOUT ;;)

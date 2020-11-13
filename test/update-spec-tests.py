@@ -25,6 +25,7 @@ REPO_ROOT_DIR = os.path.dirname(SCRIPT_DIR)
 TESTSUITE_DIR = os.path.join(REPO_ROOT_DIR, 'third_party', 'testsuite')
 SPEC_TEST_DIR = os.path.join(TEST_DIR, 'spec')
 WASM2C_SPEC_TEST_DIR = os.path.join(TEST_DIR, 'wasm2c', 'spec')
+WASM2JAVA_SPEC_TEST_DIR = os.path.join(TEST_DIR, 'wasm2java', 'spec')
 
 options = None
 
@@ -84,6 +85,7 @@ def main(args):
 
     ProcessDir(SPEC_TEST_DIR, TESTSUITE_DIR, 'run-interp-spec')
     ProcessDir(WASM2C_SPEC_TEST_DIR, TESTSUITE_DIR, 'run-spec-wasm2c')
+    ProcessDir(WASM2JAVA_SPEC_TEST_DIR, TESTSUITE_DIR, 'run-spec-wasm2java')
 
     ProcessProposalDir('multi-value', '--enable-multi-value')
     ProcessProposalDir('mutable-global')  # Already enabled by default.
