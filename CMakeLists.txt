@@ -456,10 +456,10 @@ if (BUILD_TOOLS)
     INSTALL
   )
 
-  # wasm2java
+  # wasm2kotlin
   wabt_executable(
-    NAME wasm2java
-    SOURCES src/tools/wasm2java.cc src/java-writer.cc
+    NAME wasm2kotlin
+    SOURCES src/tools/wasm2kotlin.cc src/kotlin-writer.cc
     INSTALL
   )
 

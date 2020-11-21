@@ -26,7 +26,7 @@ REPO_ROOT_DIR = os.path.dirname(SCRIPT_DIR)
 EXECUTABLES = [
     'wat2wasm', 'wast2json', 'wasm2wat', 'wasm-objdump', 'wasm-interp',
     'wasm-opcodecnt', 'wat-desugar', 'spectest-interp', 'wasm-validate',
-    'wasm2c', 'wasm2java', 'wasm-strip', 'wasm-decompile'
+    'wasm2c', 'wasm2kotlin', 'wasm-strip', 'wasm-decompile'
 ]
 
 
@@ -105,8 +105,8 @@ def GetWasm2CExecutable(override=None):
     return FindExecutable('wasm2c', override)
 
 
-def GetWasm2JavaExecutable(override=None):
-    return FindExecutable('wasm2java', override)
+def GetWasm2KotlinExecutable(override=None):
+    return FindExecutable('wasm2kotlin', override)
 
 
 def GetWasmStripExecutable(override=None):

@@ -150,8 +150,8 @@ TOOLS = {
     #    ]),
     #    ('VERBOSE-ARGS', ['--print-cmd', '-v']),
     #],
-    'run-spec-wasm2java': [
-        ('RUN', 'test/run-spec-wasm2java.py'),
+    'run-spec-wasm2kotlin': [
+        ('RUN', 'test/run-spec-wasm2kotlin.py'),
         ('ARGS', [
             '%(in_file)s',
             '--bindir=%(bindir)s',
