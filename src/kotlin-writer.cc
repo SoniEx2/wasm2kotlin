@@ -18,6 +18,8 @@
 
 #include <cctype>
 #include <cinttypes>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -202,11 +204,6 @@ class KotlinWriter {
   std::string GetGlobalName(const std::string&) const;
   std::string GetModuleName(const std::string&) const;
 
-  enum class WriteExportsKind {
-    Declarations,
-    Initializers,
-  };
-
   void Write() {}
   void Write(Newline);
   void Write(OpenBrace);
@@ -245,8 +242,7 @@ class KotlinWriter {
   void WriteTable(const std::string&);
   void WriteDataInitializers();
   void WriteElemInitializers();
-  void WriteInitExports();
-  void WriteExports(WriteExportsKind);
+  void WriteExports(bool);
   void WriteInit();
   void WriteFuncs();
   void Write(const Func&);
@@ -468,7 +464,7 @@ std::string KotlinWriter::LegalizeName(string_view name) {
   // colliding with things C cares about, such as reserved words (e.g. "void")
   // or a function name like main() (which a compiler will  complain about if we
   // define it with another type). To avoid such problems, prefix.
-  result = "w2j_" + result;
+  result = "w2k_" + result;
 
   return result;
 }
@@ -760,13 +756,25 @@ void KotlinWriter::Write(const ResultType& rt) {
 
 void KotlinWriter::Write(const Const& const_) {
   switch (const_.type()) {
-    case Type::I32:
-      Writef("%d", static_cast<int32_t>(const_.u32()));
+    case Type::I32: {
+      int32_t i32_bits = static_cast<int32_t>(const_.u32());
+      if (i32_bits == std::numeric_limits<int32_t>::min()) {
+        Write("(-0x7FFFFFFF - 1)");
+      } else {
+        Writef("%d", i32_bits);
+      }
       break;
+    }
 
-    case Type::I64:
-      Writef("%" PRId64 "l", static_cast<int64_t>(const_.u64()));
+    case Type::I64: {
+      int64_t i64_bits = static_cast<int64_t>(const_.u64());
+      if (i64_bits == std::numeric_limits<int64_t>::min()) {
+        Write("(-0x7FFFFFFFFFFFFFFFL - 1L)");
+      } else {
+        Writef("%" PRId64 "L", i64_bits);
+      }
       break;
+    }
 
     case Type::F32: {
       uint32_t f32_bits = const_.f32_bits();
@@ -784,9 +792,15 @@ void KotlinWriter::Write(const Const& const_) {
         }
       } else if (f32_bits == 0x80000000) {
         // Negative zero. Special-cased so it isn't written as -0 below.
-        Writef("-0.f");
+        Writef("-0.0f");
       } else {
         Writef("%.9g", Bitcast<float>(f32_bits));
+        float frac, whole;
+        frac = modff(Bitcast<float>(f32_bits), &whole);
+        if (frac == 0.0f) {
+          Write(".0");
+        }
+        Write("f");
       }
       break;
     }
@@ -811,6 +825,11 @@ void KotlinWriter::Write(const Const& const_) {
         Writef("-0.0");
       } else {
         Writef("%.17g", Bitcast<double>(f64_bits));
+        double frac, whole;
+        frac = modf(Bitcast<double>(f64_bits), &whole);
+        if (frac == 0.0) {
+          Write(".0");
+        }
       }
       break;
     }
@@ -1004,7 +1023,9 @@ void KotlinWriter::WriteFuncDeclarations() {
       Write("private var ");
       std::string name = DefineGlobalScopeName(func->name, Type::Func);
       WriteFuncDeclaration(func->decl, name);
-      Write(" = this::", name, Newline());
+      // TODO(Soni): C-like funcs in java? lmao
+      //Write(" = this::", name, Newline());
+      Write(";", Newline());
     }
     ++func_index;
   }
@@ -1018,7 +1039,7 @@ void KotlinWriter::WriteGlobals() {
     for (const Global* global : module_->globals) {
       bool is_import = global_index < module_->num_global_imports;
       if (!is_import) {
-        Write("private ");
+        Write("private var ");
         WriteGlobal(*global, DefineGlobalScopeName(global->name, global->type));
         Write(";", Newline());
       }
@@ -1106,7 +1127,11 @@ void KotlinWriter::WriteDataInitializers() {
               data_segment_index, ": ByteArray = byteArrayOf(");
         size_t i = 0;
         for (uint8_t x : data_segment->data) {
-          Writef("0x%02x, ", x);
+          if (x == 0x80) {
+            Write("-0x7F - 1");
+          } else {
+            Writef("%d, ", x);
+          }
           if ((++i % 12) == 0)
             Write(Newline());
         }
@@ -1179,23 +1204,15 @@ void KotlinWriter::WriteElemInitializers() {
   Write(CloseBrace(), Newline());
 }
 
-void KotlinWriter::WriteInitExports() {
-  Write(Newline(), "init /* exports */ ", OpenBrace());
-  WriteExports(WriteExportsKind::Initializers);
-  Write(CloseBrace(), Newline());
-}
-
-void KotlinWriter::WriteExports(WriteExportsKind kind) {
+void KotlinWriter::WriteExports(bool actually_write) {
   if (module_->exports.empty())
     return;
 
-  if (kind != WriteExportsKind::Initializers) {
-    Write(Newline());
-  }
+  Write(Newline());
 
   for (const Export* export_ : module_->exports) {
-    Write("/* export: '", export_->name, "' */", Newline());
-    if (kind == WriteExportsKind::Declarations) {
+    if (actually_write) {
+      Write("/* export: '", export_->name, "' */", Newline());
       Write("public var ");
     }
 
@@ -1209,9 +1226,8 @@ void KotlinWriter::WriteExports(WriteExportsKind kind) {
             ExportName(MangleFuncName(export_->name, func->decl.sig.param_types,
                                       func->decl.sig.result_types));
         internal_name = func->name;
-        if (kind != WriteExportsKind::Initializers) {
+        if (actually_write) {
           WriteFuncDeclaration(func->decl, mangled_name);
-          Write(";");
         }
         break;
       }
@@ -1221,9 +1237,8 @@ void KotlinWriter::WriteExports(WriteExportsKind kind) {
         mangled_name =
             ExportName(MangleGlobalName(export_->name, global->type));
         internal_name = global->name;
-        if (kind != WriteExportsKind::Initializers) {
+        if (actually_write) {
           WriteGlobal(*global, mangled_name);
-          Write(";");
         }
         break;
       }
@@ -1232,8 +1247,8 @@ void KotlinWriter::WriteExports(WriteExportsKind kind) {
         const Memory* memory = module_->GetMemory(export_->var);
         mangled_name = ExportName(MangleName(export_->name));
         internal_name = memory->name;
-        if (kind != WriteExportsKind::Initializers) {
-          Write(mangled_name, ": wasm_rt_impl.Memory;");
+        if (actually_write) {
+          Write(mangled_name, ": wasm_rt_impl.Memory");
         }
         break;
       }
@@ -1242,8 +1257,8 @@ void KotlinWriter::WriteExports(WriteExportsKind kind) {
         const Table* table = module_->GetTable(export_->var);
         mangled_name = ExportName(MangleName(export_->name));
         internal_name = table->name;
-        if (kind != WriteExportsKind::Initializers) {
-          Write(mangled_name, ": wasm_rt_impl.Table;");
+        if (actually_write) {
+          Write(mangled_name, ": wasm_rt_impl.Table");
         }
         break;
       }
@@ -1251,9 +1266,8 @@ void KotlinWriter::WriteExports(WriteExportsKind kind) {
       default:
         WABT_UNREACHABLE;
     }
-
-    if (kind == WriteExportsKind::Initializers) {
-      Write(mangled_name, " = ", ExternalPtr(internal_name), ";");
+    if (actually_write) {
+      Write(" by ", ExternalPtr(internal_name), ";");
     }
 
     Write(Newline());
@@ -1274,6 +1288,7 @@ void KotlinWriter::WriteInit() {
 }
 
 void KotlinWriter::WriteFuncs() {
+  Write(Newline(), "init /* functions */ ", OpenBrace());
   Index func_index = 0;
   for (const Func* func : module_->funcs) {
     bool is_import = func_index < module_->num_func_imports;
@@ -1281,6 +1296,7 @@ void KotlinWriter::WriteFuncs() {
       Write(Newline(), *func, Newline());
     ++func_index;
   }
+  Write(CloseBrace());
 }
 
 void KotlinWriter::Write(const Func& func) {
@@ -1294,7 +1310,7 @@ void KotlinWriter::Write(const Func& func) {
   MakeTypeBindingReverseMapping(func_->GetNumParamsAndLocals(), func_->bindings,
                                 &index_to_name);
 
-  Write("private fun ", GlobalName(func.name), "(");
+  Write(GlobalName(func.name), " = fun(");
   WriteParams(index_to_name);
   Write(": ", ResultType(func.decl.sig.result_types), OpenBrace());
   WriteLocals(index_to_name);
@@ -1591,7 +1607,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::Loop: {
         const Block& block = cast<LoopExpr>(&expr)->block;
         if (!block.exprs.empty()) {
-          Write(DefineLocalScopeName(block.label), ": while (true) ", OpenBrace());
+          Write(DefineLocalScopeName(block.label), "@ while (true) ", OpenBrace());
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
           Write(block.exprs);
@@ -2320,16 +2336,16 @@ void KotlinWriter::Write(const LoadSplatExpr& expr) {
 void KotlinWriter::WriteKotlinSource() {
   stream_ = kotlin_stream_;
   WriteSourceTop();
-  WriteExports(WriteExportsKind::Declarations);
+  WriteExports(false);
   WriteFuncTypes();
   WriteFuncDeclarations();
   WriteGlobals();
   WriteMemories();
   WriteTables();
+  WriteExports(true);
   WriteFuncs();
   WriteDataInitializers();
   WriteElemInitializers();
-  WriteInitExports();
   WriteInit();
   WriteSourceBottom();
 }

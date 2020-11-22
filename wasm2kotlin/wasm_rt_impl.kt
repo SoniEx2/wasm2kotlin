@@ -1,10 +1,8 @@
 package wasm_rt_impl;
 
-const val PAGE_SIZE: Int = 65536;
+import kotlin.reflect.KMutableProperty
 
-interface ExternalRef<T> {
-    var value: T
-}
+const val PAGE_SIZE: Int = 65536;
 
 class Memory(initial_pages: Int, max_pages: Int) {
     private var mem: java.nio.ByteBuffer
@@ -25,10 +23,16 @@ class Memory(initial_pages: Int, max_pages: Int) {
 class Table(elements: Int, max_elements: Int) {
 }
 
-fun allocate_table(table: ExternalRef<Table>, elements: Int, max_elements: Int) {
+open class WasmException(message: String? = null, cause: Throwable? = null) : RuntimeException(message, cause) {
 }
 
-fun allocate_memory(memory: ExternalRef<Memory>, initial_pages: Int, max_pages: Int) {
+open class ExhaustionException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+}
+
+fun allocate_table(table: KMutableProperty<Table>, elements: Int, max_elements: Int) {
+}
+
+fun allocate_memory(memory: KMutableProperty<Memory>, initial_pages: Int, max_pages: Int) {
 }
 
 fun register_func_type(num_params: Int, num_results: Int, vararg types: Any): Int {

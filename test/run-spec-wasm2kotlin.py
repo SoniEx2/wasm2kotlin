@@ -44,7 +44,7 @@ def ReinterpretI64(i64_bits):
 
 
 def I64ToKotlin(i64_bits):
-    return "%sl" % ReinterpretI64(i64_bits)
+    return "%sL" % ReinterpretI64(i64_bits)
 
 
 def ReinterpretF32(f32_bits):
@@ -65,11 +65,11 @@ def F32ToKotlin(f32_bits):
         else:
             return '%sFloat.POSITIVE_INFINITY' % sign
     elif f32_bits == F32_SIGN_BIT:
-        return '-0.f'
+        return '-0.0f'
     else:
         s = '%.9g' % ReinterpretF32(f32_bits)
         if '.' not in s:
-            s += '.'
+            s += '.0'
         return s + 'f'
 
 
@@ -93,7 +93,10 @@ def F64ToKotlin(f64_bits):
     elif f64_bits == F64_SIGN_BIT:
         return '-0.0'
     else:
-        return '%.17g' % ReinterpretF64(f64_bits)
+        s = '%.17g' % ReinterpretF64(f64_bits)
+        if '.' not in s:
+            s += '.0'
+        return s
 
 
 def MangleType(t):
@@ -115,6 +118,13 @@ def MangleName(s):
     pattern = b'([^_a-zA-Y0-9])'
     result = 'Z_' + re.sub(pattern, Mangle, s.encode('utf-8')).decode('utf-8')
     return result
+
+
+def LegalizeName(s):
+    pattern = '([^_a-zA-Y0-9])'
+    result = 'w2k_' + re.sub(pattern, '_', s)
+    return result
+
 
 
 def IsModuleCommand(command):
@@ -210,11 +220,12 @@ class CWriter(object):
 
     def _WriteModuleCommand(self, command):
         self.module_idx += 1
+        self.out_file.write('var %s = ' % self.GetModulePrefix())
         self.out_file.write('run_test(::%s, spectest);\n' % self.GetModulePrefix())
 
     def _WriteAssertUninstantiableCommand(self, command):
         self.module_idx += 1
-        self.out_file.write('ASSERT_TRAP(run_test(::%s, spectest));\n' % self.GetModulePrefix())
+        self.out_file.write('ASSERT_TRAP { run_test(::%s, spectest) };\n' % self.GetModulePrefix())
 
     def _WriteActionCommand(self, command):
         self.out_file.write('%s;\n' % self._Action(command))
@@ -230,14 +241,14 @@ class CWriter(object):
                     'f64': 'ASSERT_RETURN_CANONICAL_NAN_F64',
                 }
                 assert_macro = assert_map[(type_)]
-                self.out_file.write('%s(%s);\n' % (assert_macro, self._Action(command)))
+                self.out_file.write('%s({ %s });\n' % (assert_macro, self._Action(command)))
             elif value == 'nan:arithmetic':
                 assert_map = {
                     'f32': 'ASSERT_RETURN_ARITHMETIC_NAN_F32',
                     'f64': 'ASSERT_RETURN_ARITHMETIC_NAN_F64',
                 }
                 assert_macro = assert_map[(type_)]
-                self.out_file.write('%s(%s);\n' % (assert_macro, self._Action(command)))
+                self.out_file.write('%s({ %s });\n' % (assert_macro, self._Action(command)))
             else:
                 assert_map = {
                     'i32': 'ASSERT_RETURN_I32',
@@ -247,7 +258,7 @@ class CWriter(object):
                 }
 
                 assert_macro = assert_map[type_]
-                self.out_file.write('%s(%s, %s);\n' %
+                self.out_file.write('%s({ %s }, %s);\n' %
                                     (assert_macro,
                                      self._Action(command),
                                      self._ConstantList(expected)))
@@ -264,7 +275,7 @@ class CWriter(object):
         }
 
         assert_macro = assert_map[command['type']]
-        self.out_file.write('%s(%s);\n' % (assert_macro, self._Action(command)))
+        self.out_file.write('%s { %s };\n' % (assert_macro, self._Action(command)))
 
     def _Constant(self, const):
         type_ = const['type']
@@ -301,10 +312,10 @@ class CWriter(object):
         expected = command['expected']
         type_ = action['type']
         mangled_module_name = self.GetModulePrefix(action.get('module'))
-        field = (mangled_module_name + MangleName(action['field']) +
+        field = (mangled_module_name + '.' + MangleName(action['field']) +
                  MangleName(self._ActionSig(action, expected)))
         if type_ == 'invoke':
-            return '%s.invoke(%s)' % (field, self._ConstantList(action.get('args', [])))
+            return '%s(%s)' % (field, self._ConstantList(action.get('args', [])))
         elif type_ == 'get':
             return '*%s' % field
         else:
