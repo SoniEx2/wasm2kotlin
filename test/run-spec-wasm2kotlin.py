@@ -72,7 +72,7 @@ def F32ToKotlin(f32_bits):
         return '-0.0f'
     else:
         s = '%.9g' % ReinterpretF32(f32_bits)
-        if '.' not in s:
+        if ('.' not in s) and ('e' not in s):
             s += '.0'
         return s + 'f'
 
@@ -98,7 +98,7 @@ def F64ToKotlin(f64_bits):
         return '-0.0'
     else:
         s = '%.17g' % ReinterpretF64(f64_bits)
-        if '.' not in s:
+        if ('.' not in s) and ('e' not in s):
             s += '.0'
         return s
 

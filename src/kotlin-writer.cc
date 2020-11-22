@@ -246,8 +246,8 @@ class KotlinWriter {
   void WriteInit();
   void WriteFuncs();
   void Write(const Func&);
-  void WriteParams(const std::vector<std::string>& index_to_name);
-  void WriteLocals(const std::vector<std::string>& index_to_name);
+  void WriteParams(const std::vector<std::string>&, std::vector<std::string>&);
+  void WriteLocals(const std::vector<std::string>&, const std::vector<std::string>&);
   void WriteStackVarDeclarations();
   void Write(const ExprList&);
 
@@ -257,6 +257,7 @@ class KotlinWriter {
   };
 
   void WriteSimpleUnaryExpr(Opcode, const char* op);
+  void WritePostfixUnaryExpr(Opcode, const char* op);
   void WriteInfixBinaryExpr(Opcode,
                             const char* op,
                             AssignOp = AssignOp::Allowed,
@@ -786,9 +787,14 @@ void KotlinWriter::Write(const Const& const_) {
           // Infinity.
           Writef("%sFloat.POSITIVE_INFINITY", sign);
         } else {
+          Write("Float.fromBits(");
           // Nan.
-          Writef("Float.intToFloatBits(0x%08x) /* %snan:0x%06x */", f32_bits,
-                 sign, significand);
+          if (f32_bits == Bitcast<uint32_t>(std::numeric_limits<int32_t>::min())) {
+            Write("-0x7FFFFFFF - 1");
+          } else {
+            Writef("%d", f32_bits);
+          }
+          Writef(") /* %snan:0x%06x */", sign, significand);
         }
       } else if (f32_bits == 0x80000000) {
         // Negative zero. Special-cased so it isn't written as -0 below.
@@ -811,9 +817,13 @@ void KotlinWriter::Write(const Const& const_) {
           Writef("%sDouble.POSITIVE_INFINITY", sign);
         } else {
           // Nan.
-          Writef("Double.longToDoubleBits(0x%016" PRIx64 "L) /* %snan:0x%013" PRIx64
-                 " */",
-                 f64_bits, sign, significand);
+          Write("Double.fromBits(");
+          if (f64_bits == Bitcast<uint64_t>(std::numeric_limits<int64_t>::min())) {
+            Write("-0x7FFFFFFFFFFFFFFFL - 1L");
+          } else {
+            Writef("%" PRId64 "L", f64_bits);
+          }
+          Writef(") /* %snan:0x%013" PRIx64 " */", sign, significand);
         }
       } else if (f64_bits == 0x8000000000000000ull) {
         // Negative zero. Special-cased so it isn't written as -0 below.
@@ -1117,11 +1127,7 @@ void KotlinWriter::WriteDataInitializers() {
               data_segment_index, ": ByteArray = byteArrayOf(");
         size_t i = 0;
         for (uint8_t x : data_segment->data) {
-          if (x == 0x80) {
-            Write("-0x7F - 1");
-          } else {
-            Writef("%d, ", x);
-          }
+          Writef("%hhd, ", x);
           if ((++i % 12) == 0)
             Write(Newline());
         }
@@ -1297,13 +1303,14 @@ void KotlinWriter::Write(const Func& func) {
   stack_var_sym_map_.clear();
 
   std::vector<std::string> index_to_name;
+  std::vector<std::string> to_shadow;
   MakeTypeBindingReverseMapping(func_->GetNumParamsAndLocals(), func_->bindings,
                                 &index_to_name);
 
   Write(GlobalName(func.name), " = fun(");
-  WriteParams(index_to_name);
+  WriteParams(index_to_name, to_shadow);
   Write(": ", ResultType(func.decl.sig.result_types), OpenBrace());
-  WriteLocals(index_to_name);
+  WriteLocals(index_to_name, to_shadow);
   //Write("FUNC_PROLOGUE;", Newline());
 
   stream_ = &funkotlin_stream_;
@@ -1339,7 +1346,7 @@ void KotlinWriter::Write(const Func& func) {
   func_ = nullptr;
 }
 
-void KotlinWriter::WriteParams(const std::vector<std::string>& index_to_name) {
+void KotlinWriter::WriteParams(const std::vector<std::string>& index_to_name, std::vector<std::string>& to_shadow) {
   if (func_->GetNumParams() != 0) {
     Indent(4);
     for (Index i = 0; i < func_->GetNumParams(); ++i) {
@@ -1348,15 +1355,23 @@ void KotlinWriter::WriteParams(const std::vector<std::string>& index_to_name) {
         if ((i % 8) == 0)
           Write(Newline());
       }
-      Write(DefineLocalScopeName(index_to_name[i]), ": ",
-            func_->GetParamType(i));
+      std::string name = DefineLocalScopeName(index_to_name[i]);
+      to_shadow.push_back(name);
+      Write(name, ": ", func_->GetParamType(i));
     }
     Dedent(4);
   }
   Write(")");
 }
 
-void KotlinWriter::WriteLocals(const std::vector<std::string>& index_to_name) {
+void KotlinWriter::WriteLocals(const std::vector<std::string>& index_to_name, const std::vector<std::string>& to_shadow) {
+  if (!to_shadow.empty()) {
+    Indent(4);
+    for (auto param : to_shadow) {
+      Write("var ", param, " = ", param, ";", Newline());
+    }
+    Dedent(4);
+  }
   Index num_params = func_->GetNumParams();
   for (Type type : {Type::I32, Type::I64, Type::F32, Type::F64}) {
     Index local_index = 0;
@@ -1658,7 +1673,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
       case ExprType::Select: {
         Type type = StackType(1);
-        Write(StackVar(2), " = if (", StackVar(0), ") ", StackVar(2), " else ",
+        Write(StackVar(2), " = if (", StackVar(0), ".isz()) ", StackVar(2), " else ",
               StackVar(1), ";", Newline());
         DropTypes(3);
         PushType(type);
@@ -1721,6 +1736,13 @@ void KotlinWriter::WriteSimpleUnaryExpr(Opcode opcode, const char* op) {
   PushType(opcode.GetResultType());
 }
 
+void KotlinWriter::WritePostfixUnaryExpr(Opcode opcode, const char* op) {
+  Type result_type = opcode.GetResultType();
+  Write(StackVar(0, result_type), " = (", StackVar(0), ")", op, ";", Newline());
+  DropTypes(1);
+  PushType(opcode.GetResultType());
+}
+
 void KotlinWriter::WriteInfixBinaryExpr(Opcode opcode,
                                    const char* op,
                                    AssignOp assign_op,
@@ -1730,7 +1752,7 @@ void KotlinWriter::WriteInfixBinaryExpr(Opcode opcode,
   if (assign_op == AssignOp::Allowed) {
     Write(" ", op, "= ", StackVar(0));
   } else {
-    Write(" = ", StackVar(1), " ", op, " ", StackVar(0));
+    Write(" = (", StackVar(1), " ", op, " ", StackVar(0), ")");
   }
   if (debooleanize) {
     Write(".bto", result_type, "()");
@@ -1749,6 +1771,7 @@ void KotlinWriter::WritePrefixBinaryExpr(Opcode opcode, const char* op) {
 }
 
 void KotlinWriter::WriteUnsignedCompareExpr(Opcode opcode, const char* op) {
+  // FIXME(Soni)
   Type result_type = opcode.GetResultType();
   Type type = opcode.GetParamType1();
   assert(opcode.GetParamType2() == type);
@@ -1822,17 +1845,17 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
 
     case Opcode::I32And:
     case Opcode::I64And:
-      WriteInfixBinaryExpr(expr.opcode, "&");
+      WriteInfixBinaryExpr(expr.opcode, "and", AssignOp::Disallowed);
       break;
 
     case Opcode::I32Or:
     case Opcode::I64Or:
-      WriteInfixBinaryExpr(expr.opcode, "|");
+      WriteInfixBinaryExpr(expr.opcode, "or", AssignOp::Disallowed);
       break;
 
     case Opcode::I32Xor:
     case Opcode::I64Xor:
-      WriteInfixBinaryExpr(expr.opcode, "^");
+      WriteInfixBinaryExpr(expr.opcode, "xor", AssignOp::Disallowed);
       break;
 
     case Opcode::I32Shl:
@@ -1972,22 +1995,22 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
     case Opcode::I32Eqz:
     case Opcode::I64Eqz: {
         Type result_type = expr.opcode.GetResultType();
-        Write(StackVar(0, result_type), " = ", "0 == ", "(", StackVar(0), ") ? 1 : 0;", Newline());
+        Write(StackVar(0, result_type), " = (", StackVar(0), ").isz().bto", result_type,"();", Newline());
         DropTypes(1);
         PushType(expr.opcode.GetResultType());
       }
       break;
 
     case Opcode::I64ExtendI32S:
-      WriteSimpleUnaryExpr(expr.opcode, "(long)(int)");
+      WritePostfixUnaryExpr(expr.opcode, ".toLong()");
       break;
 
     case Opcode::I64ExtendI32U:
-      WriteSimpleUnaryExpr(expr.opcode, "0xFFFFFFFFL & (long)");
+      WritePostfixUnaryExpr(expr.opcode, ".toLong() and 0xFFFFFFFFL");
       break;
 
     case Opcode::I32WrapI64:
-      WriteSimpleUnaryExpr(expr.opcode, "(int)");
+      WritePostfixUnaryExpr(expr.opcode, ".toInt()");
       break;
 
     case Opcode::I32TruncF32S:
@@ -2046,7 +2069,7 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
       break;
 
     case Opcode::F32DemoteF64:
-      WriteSimpleUnaryExpr(expr.opcode, "(float)");
+      WritePostfixUnaryExpr(expr.opcode, ".toFloat()");
       break;
 
     case Opcode::F32ConvertI64U:
@@ -2066,7 +2089,7 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
       break;
 
     case Opcode::F64PromoteF32:
-      WriteSimpleUnaryExpr(expr.opcode, "(double)");
+      WritePostfixUnaryExpr(expr.opcode, ".toDouble()");
       break;
 
     case Opcode::F64ConvertI64U:
@@ -2074,19 +2097,19 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
       break;
 
     case Opcode::F32ReinterpretI32:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.f32_reinterpret_i32");
+      WriteSimpleUnaryExpr(expr.opcode, "Float.fromBits");
       break;
 
     case Opcode::I32ReinterpretF32:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.i32_reinterpret_f32");
+      WritePostfixUnaryExpr(expr.opcode, ".toRawBits()");
       break;
 
     case Opcode::F64ReinterpretI64:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.f64_reinterpret_i64");
+      WriteSimpleUnaryExpr(expr.opcode, "Double.fromBits");
       break;
 
     case Opcode::I64ReinterpretF64:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.i64_reinterpret_f64");
+      WritePostfixUnaryExpr(expr.opcode, ".toRawBits()");
       break;
 
     default:

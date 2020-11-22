@@ -69,3 +69,6 @@ fun i64_load(memory: KMutableProperty0<Memory>, position: Long): Long = memory.g
 
 fun Boolean.btoInt(): Int = if (this) 1 else 0
 fun Boolean.btoLong(): Long = if (this) 1L else 0L
+
+fun Int.isz(): Boolean = this == 0
+fun Long.isz(): Boolean = this == 0L
