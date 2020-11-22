@@ -36,6 +36,8 @@ def ReinterpretI32(i32_bits):
 
 
 def I32ToKotlin(i32_bits):
+    if i32_bits == 0x80000000:
+        return "(-0x7fffffff - 1)"
     return "%s" % ReinterpretI32(i32_bits)
 
 
@@ -44,6 +46,8 @@ def ReinterpretI64(i64_bits):
 
 
 def I64ToKotlin(i64_bits):
+    if i64_bits == 0x8000000000000000:
+        return "(-0x7fffffffffffffffL - 1L)"
     return "%sL" % ReinterpretI64(i64_bits)
 
 

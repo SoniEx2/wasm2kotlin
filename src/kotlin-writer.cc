@@ -794,12 +794,7 @@ void KotlinWriter::Write(const Const& const_) {
         // Negative zero. Special-cased so it isn't written as -0 below.
         Writef("-0.0f");
       } else {
-        Writef("%.9g", Bitcast<float>(f32_bits));
-        float frac, whole;
-        frac = modff(Bitcast<float>(f32_bits), &whole);
-        if (frac == 0.0f) {
-          Write(".0");
-        }
+        Writef("%#.9g", Bitcast<float>(f32_bits));
         Write("f");
       }
       break;
@@ -816,7 +811,7 @@ void KotlinWriter::Write(const Const& const_) {
           Writef("%sDouble.POSITIVE_INFINITY", sign);
         } else {
           // Nan.
-          Writef("Double.longToDoubleBits(0x%016" PRIx64 "l) /* %snan:0x%013" PRIx64
+          Writef("Double.longToDoubleBits(0x%016" PRIx64 "L) /* %snan:0x%013" PRIx64
                  " */",
                  f64_bits, sign, significand);
         }
@@ -824,12 +819,7 @@ void KotlinWriter::Write(const Const& const_) {
         // Negative zero. Special-cased so it isn't written as -0 below.
         Writef("-0.0");
       } else {
-        Writef("%.17g", Bitcast<double>(f64_bits));
-        double frac, whole;
-        frac = modf(Bitcast<double>(f64_bits), &whole);
-        if (frac == 0.0) {
-          Write(".0");
-        }
+        Writef("%#.17g", Bitcast<double>(f64_bits));
       }
       break;
     }
@@ -1460,10 +1450,10 @@ void KotlinWriter::Write(const ExprList& exprs) {
         DropTypes(1);
         Index i = 0;
         for (const Var& var : bt_expr->targets) {
-          Write(i++, " -> ", GotoLabel(var), Newline());
+          Write(i++, " -> ", OpenBrace(), GotoLabel(var), CloseBrace(), Newline());
         }
-        Write("else -> ");
-        Write(GotoLabel(bt_expr->default_target), Newline(), CloseBrace(),
+        Write("else -> ", OpenBrace());
+        Write(GotoLabel(bt_expr->default_target), CloseBrace(), Newline(), CloseBrace(),
               Newline());
         // Stop processing this ExprList, since the following are unreachable.
         return;
@@ -1668,7 +1658,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
       case ExprType::Select: {
         Type type = StackType(1);
-        Write(StackVar(2), " = ", StackVar(0), " ? ", StackVar(2), " : ",
+        Write(StackVar(2), " = if (", StackVar(0), ") ", StackVar(2), " else ",
               StackVar(1), ";", Newline());
         DropTypes(3);
         PushType(type);
@@ -1702,7 +1692,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         break;
 
       case ExprType::Unreachable:
-        Write("throw new RuntimeException(\"unreachable\");", Newline());
+        Write("throw wasm_rt_impl.UnreachableException(\"unreachable\");", Newline());
         return;
 
       case ExprType::AtomicLoad:
@@ -1743,7 +1733,7 @@ void KotlinWriter::WriteInfixBinaryExpr(Opcode opcode,
     Write(" = ", StackVar(1), " ", op, " ", StackVar(0));
   }
   if (debooleanize) {
-    Write(" ? 1 : 0");
+    Write(".bto", result_type, "()");
   }
   Write(";", Newline());
   DropTypes(2);
@@ -2130,10 +2120,10 @@ void KotlinWriter::Write(const LoadExpr& expr) {
   Memory* memory = module_->memories[0];
 
   Type result_type = expr.opcode.GetResultType();
-  Write(StackVar(0, result_type), " = ", func, "(", ExternalPtr(memory->name),
-        ", (long)(", StackVar(0), ")");
+  Write(StackVar(0, result_type), " = wasm_rt_impl.", func, "(", ExternalPtr(memory->name),
+        ", ", StackVar(0), ".toLong()");
   if (expr.offset != 0)
-    Write(" + ", expr.offset);
+    Write(" + ", expr.offset, "L");
   Write(");", Newline());
   DropTypes(1);
   PushType(result_type);
@@ -2159,9 +2149,9 @@ void KotlinWriter::Write(const StoreExpr& expr) {
   assert(module_->memories.size() == 1);
   Memory* memory = module_->memories[0];
 
-  Write(func, "(", ExternalPtr(memory->name), ", (long)(", StackVar(1), ")");
+  Write("wasm_rt_impl.", func, "(", ExternalPtr(memory->name), ", ", StackVar(1), ".toLong()");
   if (expr.offset != 0)
-    Write(" + ", expr.offset);
+    Write(" + ", expr.offset, "L");
   Write(", ", StackVar(0), ");", Newline());
   DropTypes(2);
 }

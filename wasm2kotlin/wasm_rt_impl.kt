@@ -1,6 +1,6 @@
 package wasm_rt_impl;
 
-import kotlin.reflect.KMutableProperty
+import kotlin.reflect.KMutableProperty0
 
 const val PAGE_SIZE: Int = 65536;
 
@@ -9,6 +9,7 @@ class Memory(initial_pages: Int, max_pages: Int) {
 
     init {
         mem = java.nio.ByteBuffer.allocate(initial_pages * PAGE_SIZE);
+        mem.order(java.nio.ByteOrder.LITTLE_ENDIAN);
     }
 
     // size is unnecessary, but...
@@ -17,6 +18,22 @@ class Memory(initial_pages: Int, max_pages: Int) {
         val indep = mem.duplicate()
         indep.position(offset)
         indep.put(bytes, 0, size)
+    }
+
+    fun i32_store(position: Long, value: Int) {
+        mem.putInt(position.toInt(), value);
+    }
+
+    fun i32_load(position: Long): Int {
+        return mem.getInt(position.toInt())
+    }
+
+    fun i64_store(position: Long, value: Long) {
+        mem.putLong(position.toInt(), value)
+    }
+
+    fun i64_load(position: Long): Long {
+        return mem.getLong(position.toInt())
     }
 }
 
@@ -29,12 +46,26 @@ open class WasmException(message: String? = null, cause: Throwable? = null) : Ru
 open class ExhaustionException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
 }
 
-fun allocate_table(table: KMutableProperty<Table>, elements: Int, max_elements: Int) {
+open class UnreachableException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
 }
 
-fun allocate_memory(memory: KMutableProperty<Memory>, initial_pages: Int, max_pages: Int) {
+fun allocate_table(table: KMutableProperty0<Table>, elements: Int, max_elements: Int) {
+    table.set(Table(elements, max_elements))
+}
+
+fun allocate_memory(memory: KMutableProperty0<Memory>, initial_pages: Int, max_pages: Int) {
+    memory.set(Memory(initial_pages, max_pages))
 }
 
 fun register_func_type(num_params: Int, num_results: Int, vararg types: Any): Int {
         return -1;
 }
+
+fun i32_store(memory: KMutableProperty0<Memory>, position: Long, value: Int) = memory.get().i32_store(position, value)
+fun i32_load(memory: KMutableProperty0<Memory>, position: Long): Int = memory.get().i32_load(position)
+
+fun i64_store(memory: KMutableProperty0<Memory>, position: Long, value: Long) = memory.get().i64_store(position, value)
+fun i64_load(memory: KMutableProperty0<Memory>, position: Long): Long = memory.get().i64_load(position)
+
+fun Boolean.btoInt(): Int = if (this) 1 else 0
+fun Boolean.btoLong(): Long = if (this) 1L else 0L
