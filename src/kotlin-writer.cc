@@ -231,7 +231,7 @@ class KotlinWriter {
   void WriteFuncTypes();
   void WriteModuleImports();
   void WriteImports();
-  void WriteFuncDeclaration(const FuncDeclaration&, const std::string&);
+  void WriteFuncType(const FuncDeclaration&);
   void WriteFuncDeclarations();
   void WriteGlobals();
   void WriteGlobal(const Global&, const ExternalPtr&);
@@ -673,7 +673,7 @@ void KotlinWriter::Write(const GotoLabel& goto_label) {
     switch (label->label_type) {
       case LabelType::Block:
       case LabelType::If:
-        Write("return@", goto_label.var, ";");
+        Write("break@", goto_label.var, ";");
         break;
       case LabelType::Loop:
         Write("continue@", goto_label.var, ";");
@@ -685,12 +685,12 @@ void KotlinWriter::Write(const GotoLabel& goto_label) {
     // We've generated names for all labels, so we should only be using an
     // index when branching to the implicit function label, which can't be
     // named.
-    Write("return@", Var(kImplicitFuncLabel), ";");
+    Write("break@", Var(kImplicitFuncLabel), ";");
   }
 }
 
 void KotlinWriter::Write(const LabelDecl& label) {
-  Write("run ", label.name, "@", Newline());
+  Write(label.name, "@ ");
 }
 
 void KotlinWriter::Write(const GlobalVar& var) {
@@ -947,11 +947,11 @@ void KotlinWriter::WriteImports() {
                                       import->field_name,
                                       func.decl.sig.param_types,
                                       func.decl.sig.result_types);
-        WriteFuncDeclaration(
-            func.decl,
-            DefineImportName(
+        std::string name = DefineImportName(
                 func.name, import->module_name,
-                mangled, Type::Func));
+                mangled, Type::Func);
+        Write(name, ": ");
+        WriteFuncType(func.decl);
         Write(" by ", GetModuleName(import->module_name));
         Write("::", mangled, ";");
         break;
@@ -998,9 +998,8 @@ void KotlinWriter::WriteImports() {
   }
 }
 
-void KotlinWriter::WriteFuncDeclaration(const FuncDeclaration& decl,
-                                   const std::string& name) {
-  Write(name, ": (");
+void KotlinWriter::WriteFuncType(const FuncDeclaration& decl) {
+  Write("(");
   for (Index i = 0; i < decl.GetNumParams(); ++i) {
     if (i != 0) {
       Write(", ");
@@ -1022,9 +1021,8 @@ void KotlinWriter::WriteFuncDeclarations() {
     if (!is_import) {
       Write("private var ");
       std::string name = DefineGlobalScopeName(func->name, Type::Func);
-      WriteFuncDeclaration(func->decl, name);
-      // TODO(Soni): C-like funcs in java? lmao
-      //Write(" = this::", name, Newline());
+      Write(name, ": ");
+      WriteFuncType(func->decl);
       Write(";", Newline());
     }
     ++func_index;
@@ -1223,7 +1221,8 @@ void KotlinWriter::WriteExports(bool actually_write) {
                                       func->decl.sig.result_types));
         internal_name = func->name;
         if (actually_write) {
-          WriteFuncDeclaration(func->decl, mangled_name);
+          Write(mangled_name, ": ");
+          WriteFuncType(func->decl);
         }
         break;
       }
@@ -1320,9 +1319,9 @@ void KotlinWriter::Write(const Func& func) {
   ResetTypeStack(0);
   std::string empty;  // Must not be temporary, since address is taken by Label.
   PushLabel(LabelType::Func, empty, func.decl.sig);
-  Write(LabelDecl(label), OpenBrace());
+  Write(LabelDecl(label), "do ", OpenBrace());
   Write(func.exprs);
-  Write(CloseBrace(), Newline());
+  Write(CloseBrace(), " while (false);", Newline());
   PopLabel();
   ResetTypeStack(0);
   PushTypes(func.decl.sig.result_types);
@@ -1366,21 +1365,15 @@ void KotlinWriter::WriteParams(const std::vector<std::string>& index_to_name, st
 
 void KotlinWriter::WriteLocals(const std::vector<std::string>& index_to_name, const std::vector<std::string>& to_shadow) {
   if (!to_shadow.empty()) {
-    Indent(4);
     for (auto param : to_shadow) {
       Write("var ", param, " = ", param, ";", Newline());
     }
-    Dedent(4);
   }
   Index num_params = func_->GetNumParams();
   for (Type type : {Type::I32, Type::I64, Type::F32, Type::F64}) {
     Index local_index = 0;
-    size_t count = 0;
     for (Type local_type : func_->local_types) {
       if (local_type == type) {
-        if (count == 0) {
-          Indent(4);
-        }
         Write("var ", DefineLocalScopeName(index_to_name[num_params + local_index]),
               ": ", local_type, " = 0");
         if (type == Type::F32) {
@@ -1389,12 +1382,8 @@ void KotlinWriter::WriteLocals(const std::vector<std::string>& index_to_name, co
           Write(".0");
         }
         Write(Newline());
-        ++count;
       }
       ++local_index;
-    }
-    if (count != 0) {
-      Dedent(4);
     }
   }
 }
@@ -1439,9 +1428,9 @@ void KotlinWriter::Write(const ExprList& exprs) {
         size_t mark = MarkTypeStack();
         PushLabel(LabelType::Block, block.label, block.decl.sig);
         Write(LabelDecl(label));
-        Write(OpenBrace());
+        Write("do ", OpenBrace());
         Write(block.exprs);
-        Write(CloseBrace(), Newline());
+        Write(CloseBrace(), " while (false);", Newline());
         ResetTypeStack(mark);
         PopLabel();
         PushTypes(block.decl.sig.result_types);
@@ -1454,7 +1443,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         return;
 
       case ExprType::BrIf:
-        Write("if (0 != ", StackVar(0), ") {");
+        Write("if (", StackVar(0), ".inz()) {");
         DropTypes(1);
         Write(GotoLabel(cast<BrIfExpr>(&expr)->var), "}", Newline());
         break;
@@ -1487,9 +1476,9 @@ void KotlinWriter::Write(const ExprList& exprs) {
         }
 
         if (is_import) {
-          Write(GlobalVar(var), ".invoke(");
-        } else {
           Write(GlobalVar(var), "(");
+        } else {
+          Write("(this::", GlobalVar(var), ").get()(");
         }
         for (Index i = 0; i < num_params; ++i) {
           if (i != 0) {
@@ -1519,11 +1508,12 @@ void KotlinWriter::Write(const ExprList& exprs) {
         assert(decl.has_func_type);
         Index func_type_index = module_->GetFuncTypeIndex(decl.type_var);
 
-        Write("CALL_INDIRECT(", ExternalReadRef(table->name), ", ");
-        //WriteFuncDeclaration(decl, "(*)");
-        Write(", ", func_type_index, ", ", StackVar(0));
+        Write("wasm_rt_impl.CALL_INDIRECT<");
+        WriteFuncType(decl);
+        Write(">(", ExternalReadRef(table->name), ", ");
+        Write(func_type_index, ", ", StackVar(0), ")(");
         for (Index i = 0; i < num_params; ++i) {
-          Write(", ", StackVar(num_params - i));
+          Write(StackVar(num_params - i), ", ");
         }
         Write(");", Newline());
         DropTypes(num_params + 1);
@@ -1567,8 +1557,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::If: {
         const IfExpr& if_ = *cast<IfExpr>(&expr);
         std::string label = DefineLocalScopeName(if_.true_.label);
-        Write("run ", label, "@ ", OpenBrace());
-        Write("if (0 != ", StackVar(0), ") ", OpenBrace());
+        Write(LabelDecl(label), "do ", OpenBrace());
+        Write("if (", StackVar(0), ".inz()) ", OpenBrace());
         DropTypes(1);
         size_t mark = MarkTypeStack();
         PushLabel(LabelType::If, if_.true_.label, if_.true_.decl.sig);
@@ -1577,7 +1567,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
           ResetTypeStack(mark);
           Write(" else ", OpenBrace(), if_.false_, CloseBrace());
         }
-        Write(CloseBrace());
+        Write(CloseBrace(), " while (false);");
         ResetTypeStack(mark);
         Write(Newline());
         PopLabel();
@@ -1612,7 +1602,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::Loop: {
         const Block& block = cast<LoopExpr>(&expr)->block;
         if (!block.exprs.empty()) {
-          Write(DefineLocalScopeName(block.label), "@ while (true) ", OpenBrace());
+          Write(LabelDecl(DefineLocalScopeName(block.label)), "while (true) ", OpenBrace());
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
           Write(block.exprs);
@@ -1646,7 +1636,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         assert(module_->memories.size() == 1);
         Memory* memory = module_->memories[0];
 
-        Write(StackVar(0), " = wasm_rt_grow_memory(", ExternalPtr(memory->name),
+        Write(StackVar(0), " = wasm_rt_impl.grow_memory(", ExternalPtr(memory->name),
               ", ", StackVar(0), ");", Newline());
         break;
       }
@@ -1771,19 +1761,19 @@ void KotlinWriter::WritePrefixBinaryExpr(Opcode opcode, const char* op) {
 }
 
 void KotlinWriter::WriteUnsignedCompareExpr(Opcode opcode, const char* op) {
-  // FIXME(Soni)
   Type result_type = opcode.GetResultType();
   Type type = opcode.GetParamType1();
   assert(opcode.GetParamType2() == type);
   std::string cls;
+  // TODO(Soni): these are kinda ew. can we use UInt/ULong instead?
   if (type == Type::I32) {
-    cls = "Integer";
+    cls = "java.lang.Integer";
   } else {
     assert(type == Type::I64);
-    cls = "Long";
+    cls = "java.lang.Long";
   }
-  Write(StackVar(1, result_type), " = (", type, ")(", cls, ".compareUnsigned(",
-        StackVar(1), ", ", StackVar(0), ")", op, "0 ? 1 : 0);",
+  Write(StackVar(1, result_type), " = (", cls, ".compareUnsigned(",
+        StackVar(1), ", ", StackVar(0), ")", op, "0).bto", result_type, "();",
         Newline());
   DropTypes(2);
   PushType(result_type);
@@ -1860,25 +1850,22 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
 
     case Opcode::I32Shl:
     case Opcode::I64Shl:
-      Write(StackVar(1), " <<= (", StackVar(0), " & ",
-            GetShiftMask(expr.opcode.GetResultType()), ");", Newline());
+      Write(StackVar(1), " = (", StackVar(1), " shl (", StackVar(0), ".toInt() and ",
+            GetShiftMask(expr.opcode.GetResultType()), "));", Newline());
       DropTypes(1);
       break;
 
     case Opcode::I32ShrS:
-    case Opcode::I64ShrS: {
-      Type type = expr.opcode.GetResultType();
-      Write(StackVar(1), " = (", type, ")((", SignedType(type), ")",
-            StackVar(1), " >> (", StackVar(0), " & ", GetShiftMask(type), "));",
-            Newline());
+    case Opcode::I64ShrS:
+      Write(StackVar(1), " = (", StackVar(1), " shr (", StackVar(0), ".toInt() and ",
+            GetShiftMask(expr.opcode.GetResultType()), "));", Newline());
       DropTypes(1);
       break;
-    }
 
     case Opcode::I32ShrU:
     case Opcode::I64ShrU:
-      Write(StackVar(1), " >>= (", StackVar(0), " & ",
-            GetShiftMask(expr.opcode.GetResultType()), ");", Newline());
+      Write(StackVar(1), " = (", StackVar(1), " ushr (", StackVar(0), ".toInt() and ",
+            GetShiftMask(expr.opcode.GetResultType()), "));", Newline());
       DropTypes(1);
       break;
 
@@ -2131,7 +2118,7 @@ void KotlinWriter::Write(const LoadExpr& expr) {
     case Opcode::I32Load16S: func = "i32_load16_s"; break;
     case Opcode::I64Load16S: func = "i64_load16_s"; break;
     case Opcode::I32Load16U: func = "i32_load16_u"; break;
-    case Opcode::I64Load16U: func = "i32_load16_u"; break;
+    case Opcode::I64Load16U: func = "i64_load16_u"; break;
     case Opcode::I64Load32S: func = "i64_load32_s"; break;
     case Opcode::I64Load32U: func = "i64_load32_u"; break;
 
