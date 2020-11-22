@@ -317,7 +317,7 @@ class CWriter(object):
         if type_ == 'invoke':
             return '%s(%s)' % (field, self._ConstantList(action.get('args', [])))
         elif type_ == 'get':
-            return '*%s' % field
+            return '%s' % field
         else:
             raise Error('Unexpected action type: %s' % type_)
 
