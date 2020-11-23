@@ -2,6 +2,8 @@
 //@file:JvmName("SpecTestMain")
 //package wabt.spec_test
 
+import kotlin.text.StringBuilder
+
 var g_tests_run: Int = 0
 var g_tests_passed: Int = 0
 
@@ -14,7 +16,7 @@ fun <T> ASSERT_TRAP(f: () -> T) {
     g_tests_run++
     try {
         f()
-        error("expected f to trap.", Exception())
+        error(StringBuilder("expected ").append(f).append(" to trap.").toString(), Exception())
     } catch (e: wasm_rt_impl.WasmException) {
         g_tests_passed++
     }
@@ -24,11 +26,11 @@ fun <T> ASSERT_EXHAUSTION(f: () -> T) {
     g_tests_run++
     try {
         f()
-        error("expected f to trap.", Exception())
+        error(StringBuilder("expected ").append(f).append(" to trap.").toString(), Exception())
     } catch (e: wasm_rt_impl.ExhaustionException) {
         g_tests_passed++
     } catch (e: wasm_rt_impl.WasmException) {
-        error("expected f to trap due to exhaustion.", e)
+        error(StringBuilder("expected ").append(f).append(" to trap due to exhaustion.").toString(), e)
     }
 }
 
@@ -38,7 +40,7 @@ fun <T> ASSERT_RETURN(f: () -> T) {
         f()
         g_tests_passed++
     } catch (e: wasm_rt_impl.WasmException) {
-        error("f trapped.", e)
+        error(StringBuilder().append(f).append(" trapped.").toString(), e)
     }
 }
 
@@ -49,10 +51,10 @@ fun <T> ASSERT_RETURN_T(f: () -> T, expected: T, is_equal: (T, T) -> Boolean) {
         if (is_equal(value, expected)) {
             g_tests_passed++
         } else {
-            error("in f: expected , got .", Exception())
+            error(StringBuilder("in ").append(f).append(": expected ").append(expected).append(", got ").append(value).append(".").toString(), Exception())
         }
     } catch (e: wasm_rt_impl.WasmException) {
-        error("f trapped.", e)
+        error(StringBuilder().append(f).append(" trapped.").toString(), e)
     }
 }
 
@@ -63,10 +65,11 @@ fun <T> ASSERT_RETURN_NAN_T(f: () -> T, is_nan_kind: (T) -> Boolean) {
         if (is_nan_kind(value)) {
             g_tests_passed++
         } else {
-            error("in f: expected , got .", Exception())
+            // FIXME(Soni): different nan kinds
+            error(StringBuilder("in ").append(f).append(": expected ").append(is_nan_kind).append(", got ").append(value).append(".").toString(), Exception())
         }
     } catch (e: wasm_rt_impl.WasmException) {
-        error("f trapped.", e)
+        error(StringBuilder().append(f).append(" trapped.").toString(), e)
     }
 }
 
@@ -89,10 +92,9 @@ fun is_equal_f64(x: Double, y: Double): Boolean = x.toRawBits() == y.toRawBits()
 fun make_nan_f32(x: Int): Float = Float.fromBits(x or 0x7f800000)
 fun make_nan_f64(x: Long): Double = Double.fromBits(x or 0x7ff0000000000000L)
 
-
-fun is_canonical_nan_f32(x: Float): Boolean = (x.toRawBits() and 0x7fffffff) == 0x7fc00000
-fun is_canonical_nan_f64(x: Double): Boolean = (x.toRawBits() and 0x7fffffffffffffffL) == 0x7ff8000000000000L
-fun is_arithmetic_nan_f32(x: Float): Boolean = (x.toRawBits() and 0x7fc00000) == 0x7fc00000
+fun is_canonical_nan_f32(x: Float):   Boolean = (x.toRawBits() and 0x7fffffff) == 0x7fc00000
+fun is_arithmetic_nan_f32(x: Float):  Boolean = (x.toRawBits() and 0x7fc00000) == 0x7fc00000
+fun is_canonical_nan_f64(x: Double):  Boolean = (x.toRawBits() and 0x7fffffffffffffffL) == 0x7ff8000000000000L
 fun is_arithmetic_nan_f64(x: Double): Boolean = (x.toRawBits() and 0x7ff8000000000000L) == 0x7ff8000000000000L
 
 
@@ -143,22 +145,26 @@ class Z_spectest() {
     print(")\n");
   }
   
-  var spectest_table = wasm_rt_impl.Table(0, 0)
-  var spectest_memory = wasm_rt_impl.Memory(0, 0)
+  var spectest_table: wasm_rt_impl.Table = wasm_rt_impl.Table(0, 0)
+  var spectest_memory: wasm_rt_impl.Memory = wasm_rt_impl.Memory(0, 0)
   var spectest_global_i32: Int = 666
+  var spectest_global_i64: Long = 666
+  var spectest_global_f32: Float = 666f
+  var spectest_global_f64: Double = 666.0
   
-  //void (*Z_spectestZ_printZ_vv)(void) = &spectest_print;
-  //void (*Z_spectestZ_print_i32Z_vi)(int) = &spectest_print_i32;
-  //void (*Z_spectestZ_print_f32Z_vf)(float) = &spectest_print_f32;
-  //void (*Z_spectestZ_print_i32_f32Z_vif)(int,
-  //				       float) = &spectest_print_i32_f32;
-  //void (*Z_spectestZ_print_f64Z_vd)(double) = &spectest_print_f64;
-  //void (*Z_spectestZ_print_f64_f64Z_vdd)(double,
-  //				       double) = &spectest_print_f64_f64;
+  var Z_printZ_vv: () -> Unit = this::spectest_print;
+  var Z_print_i32Z_vi: (Int) -> Unit = this::spectest_print_i32;
+  var Z_print_f32Z_vf: (Float) -> Unit = this::spectest_print_f32;
+  var Z_print_i32_f32Z_vif: (Int, Float) -> Unit = this::spectest_print_i32_f32;
+  var Z_print_f64Z_vd: (Double) -> Unit = this::spectest_print_f64;
+  var Z_print_f64_f64Z_vdd: (Double, Double) -> Unit = this::spectest_print_f64_f64;
 
-  var Z_table = this@Z_spectest::spectest_table
-  var Z_memory = this@Z_spectest::spectest_memory
-  var Z_global_i32Z_i = this@Z_spectest::spectest_global_i32
+  var Z_table: wasm_rt_impl.Table by this@Z_spectest::spectest_table;
+  var Z_memory: wasm_rt_impl.Memory by this@Z_spectest::spectest_memory;
+  var Z_global_i32Z_i: Int by this@Z_spectest::spectest_global_i32;
+  var Z_global_i64Z_i: Long by this@Z_spectest::spectest_global_i64;
+  var Z_global_f32Z_i: Float by this@Z_spectest::spectest_global_f32;
+  var Z_global_f64Z_i: Double by this@Z_spectest::spectest_global_f64;
 
   init {
     wasm_rt_impl.allocate_memory(this@Z_spectest::spectest_memory, 1, 2)

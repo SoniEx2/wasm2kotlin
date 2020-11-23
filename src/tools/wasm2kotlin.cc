@@ -39,6 +39,7 @@ static int s_verbose;
 static std::string s_infile;
 static std::string s_outfile;
 static std::string s_package;
+static std::string s_class;
 static Features s_features;
 static WriteKotlinOptions s_write_kotlin_options;
 static bool s_read_debug_names = true;
@@ -75,6 +76,12 @@ static void ParseOptions(int argc, char** argv) {
       "Package for the generated Kotlin source file, by default none",
       [](const char* argument) {
         s_package = argument;
+      });
+  parser.AddOption(
+      'c', "class", "CLASS",
+      "Class for the generated module, by default derived from filename.",
+      [](const char* argument) {
+        s_class = argument;
       });
   s_features.AddOptions(&parser);
   parser.AddOption("no-debug-names", "Ignore debug names in the binary file",
@@ -151,13 +158,20 @@ int ProgramMain(int argc, char** argv) {
 
       if (Succeeded(result)) {
         if (!s_outfile.empty()) {
-          std::string class_name = get_classname(s_outfile).to_string();
           FileStream kotlin_stream(s_outfile.c_str());
+          std::string class_name = std::move(s_class);
+          if (class_name.empty()) {
+            class_name = get_classname(s_outfile).to_string();
+          }
           result = WriteKotlin(&kotlin_stream, class_name.c_str(),
                              s_package.c_str(), &module, s_write_kotlin_options);
         } else {
           FileStream stream(stdout);
-          result = WriteKotlin(&stream, "Wasm", s_package.c_str(), &module,
+          std::string class_name = std::move(s_class);
+          if (class_name.empty()) {
+            class_name = "Wasm";
+          }
+          result = WriteKotlin(&stream, class_name.c_str(), s_package.c_str(), &module,
                              s_write_kotlin_options);
         }
       }

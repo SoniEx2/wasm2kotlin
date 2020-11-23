@@ -418,7 +418,8 @@ def main(args):
 
         for i, wasm_filename in enumerate(cwriter.GetModuleFilenames()):
             kotlin_filename = utils.ChangeExt(wasm_filename, '.kt')
-            wasm2kotlin.RunWithArgs(wasm_filename, '-p', 'wabt.spec_test', '-o', kotlin_filename, cwd=out_dir)
+            prefix = cwriter.GetModulePrefix(i)
+            wasm2kotlin.RunWithArgs(wasm_filename, '-p', 'wabt.spec_test', '-c', prefix, '-o', kotlin_filename, cwd=out_dir)
             if options.compile:
                 kotlin_filenames.append(kotlin_filename)
                 #defines = '-DWASM_RT_MODULE_PREFIX=%s' % 

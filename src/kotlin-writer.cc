@@ -496,10 +496,10 @@ std::string KotlinWriter::DefineImportName(const std::string& name,
                                       Type type) {
   std::string mangled = mangled_field_name.to_string();
   import_syms_.insert(name);
-  global_syms_.insert(mangled);
-  global_sym_map_.insert(SymbolMap::value_type(name, mangled));
-  type_map_.insert(TypeMap::value_type(mangled, type));
-  return mangled;
+  std::string unique = DefineName(&global_syms_, mangled);
+  global_sym_map_.insert(SymbolMap::value_type(name, unique));
+  type_map_.insert(TypeMap::value_type(unique, type));
+  return unique;
 }
 
 std::string KotlinWriter::DefineImportName(const std::string& name,
@@ -508,10 +508,10 @@ std::string KotlinWriter::DefineImportName(const std::string& name,
                                       ExternalKind type) {
   std::string mangled = mangled_field_name.to_string();
   import_syms_.insert(name);
-  global_syms_.insert(mangled);
-  global_sym_map_.insert(SymbolMap::value_type(name, mangled));
-  extkind_map_.insert(ExtKindMap::value_type(mangled, type));
-  return mangled;
+  std::string unique = DefineName(&global_syms_, mangled);
+  global_sym_map_.insert(SymbolMap::value_type(name, unique));
+  extkind_map_.insert(ExtKindMap::value_type(unique, type));
+  return unique;
 }
 
 std::string KotlinWriter::DefineGlobalScopeName(const std::string& name, Type type) {
@@ -632,7 +632,7 @@ void KotlinWriter::Write(const ExternalPtr& name) {
   if (is_import) {
     Write(GetGlobalName(name.name));
   } else {
-    Write(AddressOf(GetGlobalName(name.name), MangleName(class_name_)));
+    Write(AddressOf(GetGlobalName(name.name), class_name_));
   }
 }
 
@@ -863,9 +863,8 @@ void KotlinWriter::WriteSourceTop() {
   if (!package_name_.empty()) {
     Write("package ", package_name_, Newline());
   }
-  WriteImports();
   Write(s_source_includes);
-  Write("class ", MangleName(class_name_), " (");
+  Write("class ", class_name_, " (");
   WriteModuleImports();
   Write("){");
   Indent();
@@ -964,7 +963,6 @@ void KotlinWriter::WriteImports() {
                     DefineImportName(
                         global.name, import->module_name,
                         mangled, global.type));
-        // TODO(Soni): the imported module name should be allocated somehow
         Write(" by ", GetModuleName(import->module_name));
         Write("::", mangled, ";");
         break;
@@ -1187,9 +1185,9 @@ void KotlinWriter::WriteElemInitializers() {
       const Func* func = module_->GetFunc(elem_expr.var);
       Index func_type_index = module_->GetFuncTypeIndex(func->decl.type_var);
 
-      Write(ExternalReadRef(table->name), ".data[offset + ", i,
-            "] = (wasm_rt_elem_t){func_types[", func_type_index,
-            "], (wasm_rt_anyfunc_t)", ExternalPtr(func->name), "};", Newline());
+      Write(ExternalReadRef(table->name), "[offset + ", i,
+            "] = wasm_rt_impl.Elem(func_types[", func_type_index,
+            "], ", ExternalPtr(func->name), ");", Newline());
       ++i;
     }
     ++elem_segment_index;
@@ -1310,7 +1308,7 @@ void KotlinWriter::Write(const Func& func) {
   WriteParams(index_to_name, to_shadow);
   Write(": ", ResultType(func.decl.sig.result_types), OpenBrace());
   WriteLocals(index_to_name, to_shadow);
-  //Write("FUNC_PROLOGUE;", Newline());
+  Write("try ", OpenBrace());
 
   stream_ = &funkotlin_stream_;
   stream_->ClearOffset();
@@ -1325,7 +1323,6 @@ void KotlinWriter::Write(const Func& func) {
   PopLabel();
   ResetTypeStack(0);
   PushTypes(func.decl.sig.result_types);
-  //Write("FUNC_EPILOGUE;", Newline());
 
   if (!func.decl.sig.result_types.empty()) {
     // Return the top of the stack implicitly.
@@ -1338,6 +1335,8 @@ void KotlinWriter::Write(const Func& func) {
 
   std::unique_ptr<OutputBuffer> buf = funkotlin_stream_.ReleaseOutputBuffer();
   stream_->WriteData(buf->data.data(), buf->data.size());
+
+  Write(CloseBrace(), " catch(e: StackOverflowError) { throw wasm_rt_impl.ExhaustionException(null, e) }", Newline());
 
   Write(CloseBrace());
 
@@ -1602,13 +1601,15 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::Loop: {
         const Block& block = cast<LoopExpr>(&expr)->block;
         if (!block.exprs.empty()) {
-          Write(LabelDecl(DefineLocalScopeName(block.label)), "while (true) ", OpenBrace());
+          std::string label = DefineLocalScopeName(block.label);
+          Write(LabelDecl(label), "while (true) ", OpenBrace());
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
           Write(block.exprs);
           ResetTypeStack(mark);
           PopLabel();
           PushTypes(block.decl.sig.result_types);
+          Write("break@", label, ";", Newline());
           Write(CloseBrace(), Newline());
         }
         break;
@@ -2129,9 +2130,17 @@ void KotlinWriter::Write(const LoadExpr& expr) {
   assert(module_->memories.size() == 1);
   Memory* memory = module_->memories[0];
 
+  const char* mask;
+  switch (StackType(0)) {
+    case Type::I32: mask = "0xFFFFFFFFL"; break;
+    case Type::I64: mask = "(-1L)"; break;
+    default:
+      WABT_UNREACHABLE;
+  }
+
   Type result_type = expr.opcode.GetResultType();
   Write(StackVar(0, result_type), " = wasm_rt_impl.", func, "(", ExternalPtr(memory->name),
-        ", ", StackVar(0), ".toLong()");
+        ", (", StackVar(0), ".toLong() and ", mask, ")");
   if (expr.offset != 0)
     Write(" + ", expr.offset, "L");
   Write(");", Newline());
@@ -2159,7 +2168,16 @@ void KotlinWriter::Write(const StoreExpr& expr) {
   assert(module_->memories.size() == 1);
   Memory* memory = module_->memories[0];
 
-  Write("wasm_rt_impl.", func, "(", ExternalPtr(memory->name), ", ", StackVar(1), ".toLong()");
+  const char* mask;
+  switch (StackType(1)) {
+    case Type::I32: mask = "0xFFFFFFFFL"; break;
+    case Type::I64: mask = "(-1L)"; break;
+    default:
+      WABT_UNREACHABLE;
+  }
+
+  Write("wasm_rt_impl.", func, "(", ExternalPtr(memory->name),
+        ", (", StackVar(1), ".toLong() and ", mask, ")");
   if (expr.offset != 0)
     Write(" + ", expr.offset, "L");
   Write(", ", StackVar(0), ");", Newline());
@@ -2169,27 +2187,27 @@ void KotlinWriter::Write(const StoreExpr& expr) {
 void KotlinWriter::Write(const UnaryExpr& expr) {
   switch (expr.opcode) {
     case Opcode::I32Clz:
-      WriteSimpleUnaryExpr(expr.opcode, "I32_CLZ");
+      WritePostfixUnaryExpr(expr.opcode, ".countLeadingZeroBits()");
       break;
 
     case Opcode::I64Clz:
-      WriteSimpleUnaryExpr(expr.opcode, "I64_CLZ");
+      WritePostfixUnaryExpr(expr.opcode, ".countLeadingZeroBits().toLong()");
       break;
 
     case Opcode::I32Ctz:
-      WriteSimpleUnaryExpr(expr.opcode, "I32_CTZ");
+      WritePostfixUnaryExpr(expr.opcode, ".countTrailingZeroBits()");
       break;
 
     case Opcode::I64Ctz:
-      WriteSimpleUnaryExpr(expr.opcode, "I64_CTZ");
+      WritePostfixUnaryExpr(expr.opcode, ".countTrailingZeroBits().toLong()");
       break;
 
     case Opcode::I32Popcnt:
-      WriteSimpleUnaryExpr(expr.opcode, "I32_POPCNT");
+      WritePostfixUnaryExpr(expr.opcode, ".countOneBits()");
       break;
 
     case Opcode::I64Popcnt:
-      WriteSimpleUnaryExpr(expr.opcode, "I64_POPCNT");
+      WritePostfixUnaryExpr(expr.opcode, ".countOneBits().toLong()");
       break;
 
     case Opcode::F32Neg:
@@ -2198,51 +2216,33 @@ void KotlinWriter::Write(const UnaryExpr& expr) {
       break;
 
     case Opcode::F32Abs:
-      WriteSimpleUnaryExpr(expr.opcode, "fabsf");
-      break;
-
     case Opcode::F64Abs:
-      WriteSimpleUnaryExpr(expr.opcode, "fabs");
+      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.abs");
       break;
 
     case Opcode::F32Sqrt:
-      WriteSimpleUnaryExpr(expr.opcode, "sqrtf");
-      break;
-
     case Opcode::F64Sqrt:
-      WriteSimpleUnaryExpr(expr.opcode, "sqrt");
+      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.sqrt");
       break;
 
     case Opcode::F32Ceil:
-      WriteSimpleUnaryExpr(expr.opcode, "ceilf");
-      break;
-
     case Opcode::F64Ceil:
-      WriteSimpleUnaryExpr(expr.opcode, "ceil");
+      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.ceil");
       break;
 
     case Opcode::F32Floor:
-      WriteSimpleUnaryExpr(expr.opcode, "floorf");
-      break;
-
     case Opcode::F64Floor:
-      WriteSimpleUnaryExpr(expr.opcode, "floor");
+      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.floor");
       break;
 
     case Opcode::F32Trunc:
-      WriteSimpleUnaryExpr(expr.opcode, "truncf");
-      break;
-
     case Opcode::F64Trunc:
-      WriteSimpleUnaryExpr(expr.opcode, "trunc");
+      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.truncate");
       break;
 
     case Opcode::F32Nearest:
-      WriteSimpleUnaryExpr(expr.opcode, "nearbyintf");
-      break;
-
     case Opcode::F64Nearest:
-      WriteSimpleUnaryExpr(expr.opcode, "nearbyint");
+      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.round");
       break;
 
     case Opcode::I32Extend8S:
@@ -2336,6 +2336,7 @@ void KotlinWriter::Write(const LoadSplatExpr& expr) {
 void KotlinWriter::WriteKotlinSource() {
   stream_ = kotlin_stream_;
   WriteSourceTop();
+  WriteImports();
   WriteExports(false);
   WriteFuncTypes();
   WriteFuncDeclarations();
