@@ -454,7 +454,7 @@ std::string KotlinWriter::ExportName(string_view mangled_name) {
 // static
 std::string KotlinWriter::LegalizeName(string_view name) {
   if (name.empty())
-    return "__";
+    return "w2k_";
 
   std::string result;
   result = isalpha(name[0]) ? name[0] : '_';
@@ -1664,7 +1664,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
       case ExprType::Select: {
         Type type = StackType(1);
-        Write(StackVar(2), " = if (", StackVar(0), ".isz()) ", StackVar(2), " else ",
+        Write(StackVar(2), " = if (", StackVar(0), ".inz()) ", StackVar(2), " else ",
               StackVar(1), ";", Newline());
         DropTypes(3);
         PushType(type);
