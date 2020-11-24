@@ -12,77 +12,77 @@ fun error(message: String, exception: Throwable) {
     exception.printStackTrace()
 }
 
-fun <T> ASSERT_TRAP(f: () -> T) {
+inline fun <T> ASSERT_TRAP(f: () -> T, name: String) {
     g_tests_run++
     try {
         f()
-        error(StringBuilder("expected ").append(f).append(" to trap.").toString(), Exception())
+        error(StringBuilder("expected ").append(name).append(" to trap.").toString(), Exception())
     } catch (e: wasm_rt_impl.WasmException) {
         g_tests_passed++
     }
 }
 
-fun <T> ASSERT_EXHAUSTION(f: () -> T) {
+inline fun <T> ASSERT_EXHAUSTION(f: () -> T, name: String) {
     g_tests_run++
     try {
         f()
-        error(StringBuilder("expected ").append(f).append(" to trap.").toString(), Exception())
+        error(StringBuilder("expected ").append(name).append(" to trap.").toString(), Exception())
     } catch (e: wasm_rt_impl.ExhaustionException) {
         g_tests_passed++
     } catch (e: wasm_rt_impl.WasmException) {
-        error(StringBuilder("expected ").append(f).append(" to trap due to exhaustion.").toString(), e)
+        error(StringBuilder("expected ").append(name).append(" to trap due to exhaustion.").toString(), e)
     }
 }
 
-fun <T> ASSERT_RETURN(f: () -> T) {
+inline fun <T> ASSERT_RETURN(f: () -> T, name: String) {
     g_tests_run++
     try {
         f()
         g_tests_passed++
     } catch (e: wasm_rt_impl.WasmException) {
-        error(StringBuilder().append(f).append(" trapped.").toString(), e)
+        error(StringBuilder().append(name).append(" trapped.").toString(), e)
     }
 }
 
-fun <T> ASSERT_RETURN_T(f: () -> T, expected: T, is_equal: (T, T) -> Boolean) {
+inline fun <T> ASSERT_RETURN_T(f: () -> T, expected: T, is_equal: (T, T) -> Boolean, name: String) {
     g_tests_run++
     try {
         val value: T = f()
         if (is_equal(value, expected)) {
             g_tests_passed++
         } else {
-            error(StringBuilder("in ").append(f).append(": expected ").append(expected).append(", got ").append(value).append(".").toString(), Exception())
+            error(StringBuilder("in ").append(name).append(": expected ").append(expected).append(", got ").append(value).append(".").toString(), Exception())
         }
     } catch (e: wasm_rt_impl.WasmException) {
-        error(StringBuilder().append(f).append(" trapped.").toString(), e)
+        error(StringBuilder().append(name).append(" trapped.").toString(), e)
     }
 }
 
-fun <T> ASSERT_RETURN_NAN_T(f: () -> T, is_nan_kind: (T) -> Boolean) {
+inline fun <T> ASSERT_RETURN_NAN_T(f: () -> T, is_nan_kind: (T) -> Boolean, name: String, nan: String) {
     g_tests_run++
     try {
         val value: T = f()
         if (is_nan_kind(value)) {
             g_tests_passed++
         } else {
-            // FIXME(Soni): different nan kinds
-            error(StringBuilder("in ").append(f).append(": expected ").append(is_nan_kind).append(", got ").append(value).append(".").toString(), Exception())
+            // FIXME(Soni): print the bits
+            error(StringBuilder("in ").append(name).append(": expected ").append(nan).append(", got ").append(value).append(".").toString(), Exception())
         }
     } catch (e: wasm_rt_impl.WasmException) {
-        error(StringBuilder().append(f).append(" trapped.").toString(), e)
+        error(StringBuilder().append(name).append(" trapped.").toString(), e)
     }
 }
 
 
-fun ASSERT_RETURN_I32(f: () -> Int, expected: Int) = ASSERT_RETURN_T(f, expected, ::is_equal_u32)
-fun ASSERT_RETURN_I64(f: () -> Long, expected: Long) = ASSERT_RETURN_T(f, expected, ::is_equal_u64)
-fun ASSERT_RETURN_F32(f: () -> Float, expected: Float) = ASSERT_RETURN_T(f, expected, ::is_equal_f32)
-fun ASSERT_RETURN_F64(f: () -> Double, expected: Double) = ASSERT_RETURN_T(f, expected, ::is_equal_f64)
+inline fun ASSERT_RETURN_I32(f: () -> Int, expected: Int, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_u32, name)
+inline fun ASSERT_RETURN_I64(f: () -> Long, expected: Long, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_u64, name)
+inline fun ASSERT_RETURN_F32(f: () -> Float, expected: Float, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_f32, name)
+inline fun ASSERT_RETURN_F64(f: () -> Double, expected: Double, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_f64, name)
 
-fun ASSERT_RETURN_CANONICAL_NAN_F32(f: () -> Float) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f32)
-fun ASSERT_RETURN_CANONICAL_NAN_F64(f: () -> Double) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f64)
-fun ASSERT_RETURN_ARITHMETIC_NAN_F32(f: () -> Float) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f32)
-fun ASSERT_RETURN_ARITHMETIC_NAN_F64(f: () -> Double) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f64)
+inline fun ASSERT_RETURN_CANONICAL_NAN_F32(f: () -> Float, name: String) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f32, name, "canonical")
+inline fun ASSERT_RETURN_CANONICAL_NAN_F64(f: () -> Double, name: String) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f64, name, "canonical")
+inline fun ASSERT_RETURN_ARITHMETIC_NAN_F32(f: () -> Float, name: String) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f32, name, "arithmetic")
+inline fun ASSERT_RETURN_ARITHMETIC_NAN_F64(f: () -> Double, name: String) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f64, name, "arithmetic")
 
 fun is_equal_u32(x: Int, y: Int): Boolean = x == y
 fun is_equal_u64(x: Long, y: Long): Boolean = x == y
@@ -172,6 +172,9 @@ class Z_spectest() {
   }
   
 }
+
+// workaround for run_spec_tests being MethodTooLarge
+fun <R> runNoInline(f: () -> R): R = run { f() }
 
 fun <T> run_test(fn: () -> T, mod: Z_spectest): T = fn()
 

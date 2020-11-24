@@ -155,8 +155,12 @@ class CWriter(object):
         self._CacheModulePrefixes()
         self.out_file.write(self.prefix)
         self.out_file.write("\nfun run_spec_tests(spectest: Z_spectest) {\n\n")
-        for command in self.commands:
+        self.out_file.write("runNoInline {\n")
+        for i, command in enumerate(self.commands, 1):
             self._WriteCommand(command)
+            if i % 32 == 0:
+                self.out_file.write("}\nrunNoInline {\n")
+        self.out_file.write("}")
         self.out_file.write("\n}\n")
 
     def GetModuleFilenames(self):
@@ -224,12 +228,15 @@ class CWriter(object):
 
     def _WriteModuleCommand(self, command):
         self.module_idx += 1
+        self.out_file.write("}\n")
         self.out_file.write('var %s = ' % self.GetModulePrefix())
         self.out_file.write('run_test(::%s, spectest);\n' % self.GetModulePrefix())
+        self.out_file.write("runNoInline {\n")
 
     def _WriteAssertUninstantiableCommand(self, command):
         self.module_idx += 1
-        self.out_file.write('ASSERT_TRAP { run_test(::%s, spectest) };\n' % self.GetModulePrefix())
+        self.out_file.write('ASSERT_TRAP ({ run_test(::%s, spectest) },' % self.GetModulePrefix())
+        self.out_file.write(' "%s");\n' % self.GetModulePrefix())
 
     def _WriteActionCommand(self, command):
         self.out_file.write('%s;\n' % self._Action(command))
@@ -245,14 +252,14 @@ class CWriter(object):
                     'f64': 'ASSERT_RETURN_CANONICAL_NAN_F64',
                 }
                 assert_macro = assert_map[(type_)]
-                self.out_file.write('%s({ %s });\n' % (assert_macro, self._Action(command)))
+                self.out_file.write('%s({ %s }, "%s");\n' % (assert_macro, self._Action(command), self.GetModulePrefix()))
             elif value == 'nan:arithmetic':
                 assert_map = {
                     'f32': 'ASSERT_RETURN_ARITHMETIC_NAN_F32',
                     'f64': 'ASSERT_RETURN_ARITHMETIC_NAN_F64',
                 }
                 assert_macro = assert_map[(type_)]
-                self.out_file.write('%s({ %s });\n' % (assert_macro, self._Action(command)))
+                self.out_file.write('%s({ %s }, "%s");\n' % (assert_macro, self._Action(command), self.GetModulePrefix()))
             else:
                 assert_map = {
                     'i32': 'ASSERT_RETURN_I32',
@@ -262,10 +269,11 @@ class CWriter(object):
                 }
 
                 assert_macro = assert_map[type_]
-                self.out_file.write('%s({ %s }, %s);\n' %
+                self.out_file.write('%s({ %s }, %s, "%s");\n' %
                                     (assert_macro,
                                      self._Action(command),
-                                     self._ConstantList(expected)))
+                                     self._ConstantList(expected),
+                                     self.GetModulePrefix()))
         elif len(expected) == 0:
             self._WriteAssertActionCommand(command)
         else:
@@ -279,7 +287,7 @@ class CWriter(object):
         }
 
         assert_macro = assert_map[command['type']]
-        self.out_file.write('%s { %s };\n' % (assert_macro, self._Action(command)))
+        self.out_file.write('%s ({ %s }, "%s");\n' % (assert_macro, self._Action(command), self.GetModulePrefix()))
 
     def _Constant(self, const):
         type_ = const['type']
