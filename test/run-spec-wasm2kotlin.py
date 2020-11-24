@@ -113,6 +113,16 @@ def MangleTypes(types):
     return ''.join(MangleType(t) for t in types)
 
 
+def KotlinType(t):
+    return {'i32': 'Int', 'i64': 'Long', 'f32': 'Float', 'f64': 'Double'}[t]
+
+
+def KotlinTypes(types, default):
+    if not types:
+        return default
+    return ', '.join(KotlinType(t) for t in types)
+
+
 def MangleName(s):
     def Mangle(match):
         s = match.group(0)
@@ -125,10 +135,15 @@ def MangleName(s):
 
 
 def LegalizeName(s):
-    pattern = '([^_a-zA-Y0-9])'
+    pattern = '([^_a-zA-Z0-9])'
     result = 'w2k_' + re.sub(pattern, '_', s)
     return result
 
+
+def LegalizeString(s):
+    pattern = '"'
+    result = re.sub(pattern, '\\"', s)
+    return result
 
 
 def IsModuleCommand(command):
@@ -154,7 +169,7 @@ class CWriter(object):
         self._MaybeWriteDummyModule()
         self._CacheModulePrefixes()
         self.out_file.write(self.prefix)
-        self.out_file.write("\nfun run_spec_tests(spectest: Z_spectest) {\n\n")
+        self.out_file.write("\nfun run_spec_tests(moduleRegistry: wasm_rt_impl.ModuleRegistry) {\n\n")
         self.out_file.write("runNoInline {\n")
         for i, command in enumerate(self.commands, 1):
             self._WriteCommand(command)
@@ -229,14 +244,15 @@ class CWriter(object):
     def _WriteModuleCommand(self, command):
         self.module_idx += 1
         self.out_file.write("}\n")
-        self.out_file.write('var %s = ' % self.GetModulePrefix())
-        self.out_file.write('run_test(::%s, spectest);\n' % self.GetModulePrefix())
+        prefix = self.GetModulePrefix()
+        self.out_file.write('var %s = %s(moduleRegistry, "%s");\n' % (prefix, prefix, prefix))
         self.out_file.write("runNoInline {\n")
 
     def _WriteAssertUninstantiableCommand(self, command):
         self.module_idx += 1
-        self.out_file.write('ASSERT_TRAP ({ run_test(::%s, spectest) },' % self.GetModulePrefix())
-        self.out_file.write(' "%s");\n' % self.GetModulePrefix())
+        prefix = self.GetModulePrefix()
+        self.out_file.write('ASSERT_TRAP ({ %s(moduleRegistry, "%s") },' % (prefix, prefix))
+        self.out_file.write(' "%s");\n' % prefix)
 
     def _WriteActionCommand(self, command):
         self.out_file.write('%s;\n' % self._Action(command))
@@ -252,14 +268,14 @@ class CWriter(object):
                     'f64': 'ASSERT_RETURN_CANONICAL_NAN_F64',
                 }
                 assert_macro = assert_map[(type_)]
-                self.out_file.write('%s({ %s }, "%s");\n' % (assert_macro, self._Action(command), self.GetModulePrefix()))
+                self.out_file.write('%s({ %s }, "%s");\n' % (assert_macro, self._Action(command), LegalizeString(self._Action(command))))
             elif value == 'nan:arithmetic':
                 assert_map = {
                     'f32': 'ASSERT_RETURN_ARITHMETIC_NAN_F32',
                     'f64': 'ASSERT_RETURN_ARITHMETIC_NAN_F64',
                 }
                 assert_macro = assert_map[(type_)]
-                self.out_file.write('%s({ %s }, "%s");\n' % (assert_macro, self._Action(command), self.GetModulePrefix()))
+                self.out_file.write('%s({ %s }, "%s");\n' % (assert_macro, self._Action(command), LegalizeString(self._Action(command))))
             else:
                 assert_map = {
                     'i32': 'ASSERT_RETURN_I32',
@@ -273,7 +289,7 @@ class CWriter(object):
                                     (assert_macro,
                                      self._Action(command),
                                      self._ConstantList(expected),
-                                     self.GetModulePrefix()))
+                                     LegalizeString(self._Action(command))))
         elif len(expected) == 0:
             self._WriteAssertActionCommand(command)
         else:
@@ -287,7 +303,7 @@ class CWriter(object):
         }
 
         assert_macro = assert_map[command['type']]
-        self.out_file.write('%s ({ %s }, "%s");\n' % (assert_macro, self._Action(command), self.GetModulePrefix()))
+        self.out_file.write('%s ({ %s }, "%s");\n' % (assert_macro, self._Action(command), LegalizeString(self._Action(command))))
 
     def _Constant(self, const):
         type_ = const['type']
@@ -319,17 +335,28 @@ class CWriter(object):
         else:
             raise Error('Unexpected action type: %s' % type_)
 
+    def _KotlinSig(self, action, expected):
+        type_ = action['type']
+        result_types = [result['type'] for result in expected]
+        arg_types = [arg['type'] for arg in action.get('args', [])]
+        if type_ == 'invoke':
+            return "(" + KotlinTypes(arg_types, "") + ") -> " + KotlinTypes(result_types, "Unit")
+        elif type_ == 'get':
+            return KotlinType(result_types[0])
+        else:
+            raise Error('Unexpected action type: %s' % type_)
+
     def _Action(self, command):
         action = command['action']
         expected = command['expected']
         type_ = action['type']
         mangled_module_name = self.GetModulePrefix(action.get('module'))
-        field = (mangled_module_name + '.' + MangleName(action['field']) +
-                 MangleName(self._ActionSig(action, expected)))
+        field = (MangleName(action['field']) + MangleName(self._ActionSig(action, expected)))
+        sig = self._KotlinSig(action, expected)
         if type_ == 'invoke':
-            return '%s(%s)' % (field, self._ConstantList(action.get('args', [])))
+            return 'moduleRegistry.importFunc<%s>("%s", "%s").get()(%s)' % (sig, mangled_module_name, field, self._ConstantList(action.get('args', [])))
         elif type_ == 'get':
-            return '%s' % field
+            return 'moduleRegistry.importGlobal<%s>("%s", "%s").get()' % (sig, mangled_module_name, field)
         else:
             raise Error('Unexpected action type: %s' % type_)
 

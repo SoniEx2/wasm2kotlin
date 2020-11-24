@@ -98,29 +98,29 @@ fun is_canonical_nan_f64(x: Double):  Boolean = (x.toRawBits() and 0x7ffffffffff
 fun is_arithmetic_nan_f64(x: Double): Boolean = (x.toRawBits() and 0x7ff8000000000000L) == 0x7ff8000000000000L
 
 
-class Z_spectest() {
+class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
   
   /*
    * spectest implementations
    */
-  fun spectest_print() {
+  var spectest_print = fun() {
     print("spectest.print()\n");
   }
   
-  fun spectest_print_i32(i: Int) {
+  var spectest_print_i32 = fun(i: Int) {
     print("spectest.print_i32(");
     print(i);
     print(")\n");
   }
   
-  fun spectest_print_f32(f: Float) {
+  var spectest_print_f32 = fun(f: Float) {
     //printf("spectest.print_f32(%g)\n", f);
     print("spectest.print_f32(");
     print(f);
     print(")\n");
   }
   
-  fun spectest_print_i32_f32(i: Int, f: Float) {
+  var spectest_print_i32_f32 = fun(i: Int, f: Float) {
     //printf("spectest.print_i32_f32(%d %g)\n", i, f);
     print("spectest.print_i32_f32(");
     print(i);
@@ -129,16 +129,16 @@ class Z_spectest() {
     print(")\n");
   }
   
-  fun spectest_print_f64(d: Double) {
+  var spectest_print_f64 = fun(d: Double) {
     //printf("spectest.print_f64(%g)\n", d);
     print("spectest.print_f64(");
     print(d);
     print(")\n");
   }
   
-  fun spectest_print_f64_f64(d1: Double, d2: Double) {
+  var spectest_print_f64_f64 = fun(d1: Double, d2: Double) {
     //printf("spectest.print_f64_f64(%g %g)\n", d1, d2);
-    print("spectest.print_f64)f64(");
+    print("spectest.print_f64_f64(");
     print(d1);
     print(" ");
     print(d2);
@@ -152,19 +152,22 @@ class Z_spectest() {
   var spectest_global_f32: Float = 666f
   var spectest_global_f64: Double = 666.0
   
-  var Z_printZ_vv: () -> Unit = this::spectest_print;
-  var Z_print_i32Z_vi: (Int) -> Unit = this::spectest_print_i32;
-  var Z_print_f32Z_vf: (Float) -> Unit = this::spectest_print_f32;
-  var Z_print_i32_f32Z_vif: (Int, Float) -> Unit = this::spectest_print_i32_f32;
-  var Z_print_f64Z_vd: (Double) -> Unit = this::spectest_print_f64;
-  var Z_print_f64_f64Z_vdd: (Double, Double) -> Unit = this::spectest_print_f64_f64;
+  init {
+      moduleRegistry.exportFunc(name, "Z_printZ_vv", this@Z_spectest::spectest_print);
+      moduleRegistry.exportFunc(name, "Z_print_i32Z_vi", this@Z_spectest::spectest_print_i32);
+      moduleRegistry.exportFunc(name, "Z_print_f32Z_vf", this@Z_spectest::spectest_print_f32);
+      moduleRegistry.exportFunc(name, "Z_print_i32_f32Z_vif", this@Z_spectest::spectest_print_i32_f32);
+      moduleRegistry.exportFunc(name, "Z_print_f64Z_vd", this@Z_spectest::spectest_print_f64);
+      moduleRegistry.exportFunc(name, "Z_print_f64_f64Z_vdd", this@Z_spectest::spectest_print_f64_f64);
 
-  var Z_table: wasm_rt_impl.Table by this@Z_spectest::spectest_table;
-  var Z_memory: wasm_rt_impl.Memory by this@Z_spectest::spectest_memory;
-  var Z_global_i32Z_i: Int by this@Z_spectest::spectest_global_i32;
-  var Z_global_i64Z_i: Long by this@Z_spectest::spectest_global_i64;
-  var Z_global_f32Z_i: Float by this@Z_spectest::spectest_global_f32;
-  var Z_global_f64Z_i: Double by this@Z_spectest::spectest_global_f64;
+      moduleRegistry.exportTable(name, "Z_table", this@Z_spectest::spectest_table);
+      moduleRegistry.exportMemory(name, "Z_memory", this@Z_spectest::spectest_memory);
+
+      moduleRegistry.exportGlobal(name, "Z_global_i32Z_i", this@Z_spectest::spectest_global_i32);
+      moduleRegistry.exportGlobal(name, "Z_global_i64Z_j", this@Z_spectest::spectest_global_i64);
+      moduleRegistry.exportGlobal(name, "Z_global_f32Z_f", this@Z_spectest::spectest_global_f32);
+      moduleRegistry.exportGlobal(name, "Z_global_f64Z_d", this@Z_spectest::spectest_global_f64);
+  }
 
   init {
     wasm_rt_impl.allocate_memory(this@Z_spectest::spectest_memory, 1, 2)
@@ -181,8 +184,9 @@ fun <T> run_test(fn: () -> T, mod: Z_spectest): T = fn()
 fun <T> run_test(fn: (Z_spectest) -> T, mod: Z_spectest): T = fn(mod)
 
 fun main(args: Array<String>) {
-    val spectest = Z_spectest();
-    run_spec_tests(spectest);
+    val moduleRegistry = wasm_rt_impl.ModuleRegistry()
+    val spectest = Z_spectest(moduleRegistry, "Z_spectest");
+    run_spec_tests(moduleRegistry);
 
     print(g_tests_passed);
     print("/");

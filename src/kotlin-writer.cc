@@ -217,7 +217,8 @@ class KotlinWriter {
   void WriteSourceTop();
   void WriteSourceBottom();
   void WriteFuncTypes();
-  void WriteModuleImports();
+  //void WriteModuleImports();
+  void WriteImport(const char*, const std::string&, const std::string&);
   void WriteImports();
   void WriteFuncType(const FuncDeclaration&);
   void WriteFuncDeclarations();
@@ -229,7 +230,7 @@ class KotlinWriter {
   void WriteTable(const std::string&);
   void WriteDataInitializers();
   void WriteElemInitializers();
-  void WriteExports(bool);
+  void WriteExports();
   void WriteInit();
   void WriteFuncs();
   void Write(const Func&);
@@ -745,7 +746,7 @@ void KotlinWriter::Write(const Const& const_) {
         // Negative zero. Special-cased so it isn't written as -0 below.
         Writef("-0.0f");
       } else {
-        Writef("%#.9g", Bitcast<float>(f32_bits));
+        Writef("%.9g", Bitcast<float>(f32_bits));
         Write("f");
       }
       break;
@@ -774,6 +775,7 @@ void KotlinWriter::Write(const Const& const_) {
         // Negative zero. Special-cased so it isn't written as -0 below.
         Writef("-0.0");
       } else {
+        // FIXME(Soni): this is seemingly broken?
         Writef("%#.17g", Bitcast<double>(f64_bits));
       }
       break;
@@ -809,37 +811,42 @@ void KotlinWriter::WriteSourceTop() {
     Write("package ", package_name_, Newline());
   }
   Write(s_source_includes);
-  Write("class ", class_name_, " (");
-  WriteModuleImports();
-  Write("){");
+  Write("class ", class_name_, " (moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {");
+  //WriteModuleImports();
+  //Write("){");
   Indent();
 }
 
-void KotlinWriter::WriteModuleImports() {
-  if (module_->imports.empty())
-    return;
+//void KotlinWriter::WriteModuleImports() {
+//  if (module_->imports.empty())
+//    return;
+//
+//  int count = 0;
+//
+//  for (const Import* import : module_->imports) {
+//    std::string legal = LegalizeName(import->module_name);
+//    if (module_import_syms_.find(legal) == module_import_syms_.end()) {
+//      module_import_syms_.insert(legal);
+//      module_import_sym_map_.insert(SymbolMap::value_type(import->module_name, legal));
+//      if (count != 0) {
+//        Write(", ");
+//      }
+//      Write(legal, ": ", MangleName(import->module_name));
+//      count++;
+//    }
+//  }
+//}
 
-  int count = 0;
+//std::string KotlinWriter::GetModuleName(const std::string& name) const {
+//  assert(module_import_sym_map_.count(name) == 1);
+//  auto iter = module_import_sym_map_.find(name);
+//  assert(iter != module_import_sym_map_.end());
+//  return iter->second;
+//}
 
-  for (const Import* import : module_->imports) {
-    std::string legal = LegalizeName(import->module_name);
-    if (module_import_syms_.find(legal) == module_import_syms_.end()) {
-      module_import_syms_.insert(legal);
-      module_import_sym_map_.insert(SymbolMap::value_type(import->module_name, legal));
-      if (count != 0) {
-        Write(", ");
-      }
-      Write(legal, ": ", MangleName(import->module_name));
-      count++;
-    }
-  }
-}
-
-std::string KotlinWriter::GetModuleName(const std::string& name) const {
-  assert(module_import_sym_map_.count(name) == 1);
-  auto iter = module_import_sym_map_.find(name);
-  assert(iter != module_import_sym_map_.end());
-  return iter->second;
+void KotlinWriter::WriteImport(const char* type, const std::string& module, const std::string& mangled) {
+  Write(" by moduleRegistry.import", type, "(\"");
+  Write(MangleName(module), "\", \"", mangled, "\");");
 }
 
 void KotlinWriter::WriteSourceBottom() {
@@ -884,10 +891,12 @@ void KotlinWriter::WriteImports() {
     Write("/* import: '", import->module_name, "' '", import->field_name,
           "' */", Newline());
     Write("private var ");
+    std::string mangled;
+    const char *type;
     switch (import->kind()) {
       case ExternalKind::Func: {
         const Func& func = cast<FuncImport>(import)->func;
-        std::string mangled = MangleFuncName(
+        mangled = MangleFuncName(
                                       import->field_name,
                                       func.decl.sig.param_types,
                                       func.decl.sig.result_types);
@@ -896,46 +905,43 @@ void KotlinWriter::WriteImports() {
                 mangled, Type::Func);
         Write(name, ": ");
         WriteFuncType(func.decl);
-        Write(" by ", GetModuleName(import->module_name));
-        Write("::", mangled, ";");
+        type = "Func";
         break;
       }
 
       case ExternalKind::Global: {
         const Global& global = cast<GlobalImport>(import)->global;
-        std::string mangled= MangleGlobalName(import->field_name, global.type);
+        mangled = MangleGlobalName(import->field_name, global.type);
         WriteGlobal(global,
                     DefineImportName(
                         global.name, import->module_name,
                         mangled, global.type));
-        Write(" by ", GetModuleName(import->module_name));
-        Write("::", mangled, ";");
+        type = "Global";
         break;
       }
 
       case ExternalKind::Memory: {
         const Memory& memory = cast<MemoryImport>(import)->memory;
-        std::string mangled = MangleName(import->field_name);
+        mangled = MangleName(import->field_name);
         WriteMemory(DefineImportName(memory.name, import->module_name,
                                      mangled, ExternalKind::Memory));
-        Write(" by ", GetModuleName(import->module_name));
-        Write("::", mangled, ";");
+        type = "Memory";
         break;
       }
 
       case ExternalKind::Table: {
         const Table& table = cast<TableImport>(import)->table;
-        std::string mangled = MangleName(import->field_name);
+        mangled = MangleName(import->field_name);
         WriteTable(DefineImportName(table.name, import->module_name,
                                     mangled, ExternalKind::Table));
-        Write(" by ", GetModuleName(import->module_name));
-        Write("::", mangled, ";");
+        type = "Table";
         break;
       }
 
       default:
         WABT_UNREACHABLE;
     }
+    WriteImport(type, import->module_name, mangled);
 
     Write(Newline());
   }
@@ -1141,21 +1147,20 @@ void KotlinWriter::WriteElemInitializers() {
   Write(CloseBrace(), Newline());
 }
 
-void KotlinWriter::WriteExports(bool actually_write) {
+void KotlinWriter::WriteExports() {
   if (module_->exports.empty())
     return;
 
-  if (actually_write)
-    Write(Newline());
+  Write(Newline());
+
+  Write("init ", OpenBrace());
 
   for (const Export* export_ : module_->exports) {
-    if (actually_write) {
-      Write("/* export: '", export_->name, "' */", Newline());
-      Write("public var ");
-    }
+    Write("/* export: '", export_->name, "' */", Newline());
 
     std::string mangled_name;
     std::string internal_name;
+    const char* type;
 
     switch (export_->kind) {
       case ExternalKind::Func: {
@@ -1164,10 +1169,7 @@ void KotlinWriter::WriteExports(bool actually_write) {
             ExportName(MangleFuncName(export_->name, func->decl.sig.param_types,
                                       func->decl.sig.result_types));
         internal_name = func->name;
-        if (actually_write) {
-          Write(mangled_name, ": ");
-          WriteFuncType(func->decl);
-        }
+        type = "Func";
         break;
       }
 
@@ -1176,9 +1178,7 @@ void KotlinWriter::WriteExports(bool actually_write) {
         mangled_name =
             ExportName(MangleGlobalName(export_->name, global->type));
         internal_name = global->name;
-        if (actually_write) {
-          WriteGlobal(*global, mangled_name);
-        }
+        type = "Global";
         break;
       }
 
@@ -1186,9 +1186,7 @@ void KotlinWriter::WriteExports(bool actually_write) {
         const Memory* memory = module_->GetMemory(export_->var);
         mangled_name = ExportName(MangleName(export_->name));
         internal_name = memory->name;
-        if (actually_write) {
-          Write(mangled_name, ": wasm_rt_impl.Memory");
-        }
+        type = "Memory";
         break;
       }
 
@@ -1196,22 +1194,19 @@ void KotlinWriter::WriteExports(bool actually_write) {
         const Table* table = module_->GetTable(export_->var);
         mangled_name = ExportName(MangleName(export_->name));
         internal_name = table->name;
-        if (actually_write) {
-          Write(mangled_name, ": wasm_rt_impl.Table");
-        }
+        type = "Table";
         break;
       }
 
       default:
         WABT_UNREACHABLE;
     }
-    if (actually_write) {
-      // FIXME(Soni): new module system
-      Write(" by ", ExternalPtr(internal_name), ";");
-    }
+    Write("moduleRegistry.export", type, "(name, \"", mangled_name, "\", ", ExternalPtr(internal_name), ");");
 
     Write(Newline());
   }
+
+  Write(CloseBrace());
 }
 
 void KotlinWriter::WriteInit() {
@@ -1827,18 +1822,15 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
 
     case Opcode::F32Min:
     case Opcode::F64Min:
-      WritePrefixBinaryExpr(expr.opcode, "Math.min");
+      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.MIN");
       break;
 
     case Opcode::F32Max:
     case Opcode::F64Max:
-      WritePrefixBinaryExpr(expr.opcode, "Math.max");
+      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.MAX");
       break;
 
     case Opcode::F32Copysign:
-      WritePrefixBinaryExpr(expr.opcode, "Math.copySign");
-      break;
-
     case Opcode::F64Copysign:
       WritePrefixBinaryExpr(expr.opcode, "Math.copySign");
       break;
@@ -2150,7 +2142,7 @@ void KotlinWriter::Write(const UnaryExpr& expr) {
 
     case Opcode::F32Abs:
     case Opcode::F64Abs:
-      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.abs");
+      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.abs");
       break;
 
     case Opcode::F32Sqrt:
@@ -2160,17 +2152,17 @@ void KotlinWriter::Write(const UnaryExpr& expr) {
 
     case Opcode::F32Ceil:
     case Opcode::F64Ceil:
-      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.ceil");
+      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.ceil");
       break;
 
     case Opcode::F32Floor:
     case Opcode::F64Floor:
-      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.floor");
+      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.floor");
       break;
 
     case Opcode::F32Trunc:
     case Opcode::F64Trunc:
-      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.truncate");
+      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.truncate");
       break;
 
     case Opcode::F32Nearest:
@@ -2271,12 +2263,11 @@ void KotlinWriter::WriteKotlinSource() {
   WriteSourceTop();
   WriteFuncTypes();
   WriteImports();
-  WriteExports(false);
   WriteFuncDeclarations();
   WriteGlobals();
   WriteMemories();
   WriteTables();
-  WriteExports(true);
+  WriteExports();
   WriteFuncs();
   WriteDataInitializers();
   WriteElemInitializers();

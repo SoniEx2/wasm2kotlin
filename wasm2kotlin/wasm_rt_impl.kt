@@ -3,6 +3,40 @@ package wasm_rt_impl;
 import kotlin.reflect.KMutableProperty0
 import kotlin.reflect.KFunction
 
+class ModuleRegistry {
+    private var funcs: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
+    private var tables: HashMap<Pair<String, String>, KMutableProperty0<Table>> = HashMap<Pair<String, String>, KMutableProperty0<Table>>();
+    private var globals: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
+    private var memories: HashMap<Pair<String, String>, KMutableProperty0<Memory>> = HashMap<Pair<String, String>, KMutableProperty0<Memory>>();
+
+    fun <T> exportFunc(modname: String, fieldname: String, value: KMutableProperty0<T>) {
+        funcs.put(Pair(modname, fieldname), value)
+    }
+    fun exportTable(modname: String, fieldname: String, value: KMutableProperty0<Table>) {
+        tables.put(Pair(modname, fieldname), value)
+    }
+    fun <T> exportGlobal(modname: String, fieldname: String, value: KMutableProperty0<T>) {
+        globals.put(Pair(modname, fieldname), value)
+    }
+    fun exportMemory(modname: String, fieldname: String, value: KMutableProperty0<Memory>) {
+        memories.put(Pair(modname, fieldname), value)
+    }
+
+    // TODO add exceptions
+    fun <T> importFunc(modname: String, fieldname: String): KMutableProperty0<T> {
+        return funcs.get(Pair(modname, fieldname)) as KMutableProperty0<T>
+    }
+    fun importTable(modname: String, fieldname: String): KMutableProperty0<Table> {
+        return tables.get(Pair(modname, fieldname)) as KMutableProperty0<Table>
+    }
+    fun <T> importGlobal(modname: String, fieldname: String): KMutableProperty0<T> {
+        return globals.get(Pair(modname, fieldname)) as KMutableProperty0<T>
+    }
+    fun importMemory(modname: String, fieldname: String): KMutableProperty0<Memory> {
+        return memories.get(Pair(modname, fieldname)) as KMutableProperty0<Memory>
+    }
+}
+
 const val PAGE_SIZE: Int = 65536;
 
 class Memory(initial_pages: Int, max_pages: Int) {
@@ -139,6 +173,9 @@ open class DivByZeroException(message: String? = null, cause: Throwable? = null)
 open class IntOverflowException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
 }
 
+open class InvalidConversionException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+}
+
 fun allocate_table(table: KMutableProperty0<Table>, elements: Int, max_elements: Int) {
     table.set(Table(elements, max_elements))
 }
@@ -262,13 +299,17 @@ fun UIntToDouble(a: Int): Double {
 }
 fun ULongToFloat(a: Long): Float {
     if (a < 0L) {
-        return a.toFloat() + 18446744073709551616f
+        // FIXME(Soni): ???
+        // TODO(Soni): go bitwise
+        return a.toFloat() + 1.8446744073709552e+19f
     }
     return a.toFloat()
 }
 fun ULongToDouble(a: Long): Double {
     if (a < 0L) {
-        return a.toFloat() + 18446744073709551616.0
+        // FIXME(Soni): ???
+        // TODO(Soni): go bitwise
+        return a.toDouble() + 1.8446744073709552e+19
     }
     return a.toDouble()
 }
@@ -278,11 +319,58 @@ fun I64_ROTL(x: Long, y: Long) = (((x) shl ((y.toInt()) and (63))) or ((x) ushr 
 fun I32_ROTR(x: Int , y: Int ) = (((x) ushr ((y) and (31))) or ((x) shl (((31) - (y) + 1) and (31))))
 fun I64_ROTR(x: Long, y: Long) = (((x) ushr ((y.toInt()) and (63))) or ((x) shl (((63) - (y.toInt()) + 1) and (63))))
 
-fun I32_TRUNC_S_F32(a: Float ): Int  = throw WasmException("UNIMPLEMENTED")
-fun I64_TRUNC_S_F32(a: Float ): Long = throw WasmException("UNIMPLEMENTED")
-fun I32_TRUNC_S_F64(a: Double): Int  = throw WasmException("UNIMPLEMENTED")
-fun I64_TRUNC_S_F64(a: Double): Long = throw WasmException("UNIMPLEMENTED")
-fun I32_TRUNC_U_F32(a: Float ): Int  = throw WasmException("UNIMPLEMENTED")
-fun I64_TRUNC_U_F32(a: Float ): Long = throw WasmException("UNIMPLEMENTED")
-fun I32_TRUNC_U_F64(a: Double): Int  = throw WasmException("UNIMPLEMENTED")
-fun I64_TRUNC_U_F64(a: Double): Long = throw WasmException("UNIMPLEMENTED")
+fun I32_TRUNC_S_F32(x: Float ): Int  =
+  if (x.isNaN()) { throw InvalidConversionException() }
+  else if (!(x >= Int.MIN_VALUE.toFloat() && x < 2147483648f)) { throw IntOverflowException() }
+  else { x.toInt() }
+fun I64_TRUNC_S_F32(x: Float ): Long =
+  if (x.isNaN()) { throw InvalidConversionException() }
+  else if (!(x >= Long.MIN_VALUE.toFloat() && x < Long.MAX_VALUE.toFloat())) { throw IntOverflowException() }
+  else { x.toLong() }
+fun I32_TRUNC_S_F64(x: Double): Int  =
+  if (x.isNaN()) { throw InvalidConversionException() }
+  else if (!(x > -2147483649.0 && x < 2147483648.0)) { throw IntOverflowException() }
+  else { x.toInt() }
+fun I64_TRUNC_S_F64(x: Double): Long =
+  if (x.isNaN()) { throw InvalidConversionException() }
+  else if (!(x >= Long.MIN_VALUE.toDouble() && x < Long.MAX_VALUE.toDouble())) { throw IntOverflowException() }
+  else { x.toLong() }
+
+fun I32_TRUNC_U_F32(x: Float ): Int  =
+  if (x.isNaN()) { throw InvalidConversionException() }
+  else if (!(x > -1.0f && x < 4294967296f)) { throw IntOverflowException() }
+  else { x.toLong().toInt() }
+fun I64_TRUNC_U_F32(x: Float ): Long =
+  if (x.isNaN()) { throw InvalidConversionException() }
+  else if (!(x > -1.0f && x < 18446744073709551616f)) { throw IntOverflowException() }
+  else if (x < Long.MAX_VALUE.toFloat()) { x.toLong() }
+  else { (x - Long.MAX_VALUE.toFloat()).toLong() + Long.MIN_VALUE }
+fun I32_TRUNC_U_F64(x: Double): Int  =
+  if (x.isNaN()) { throw InvalidConversionException() }
+  else if (!(x > -1.0 && x < 4294967296.0)) { throw IntOverflowException() }
+  else { x.toLong().toInt() }
+fun I64_TRUNC_U_F64(x: Double): Long =
+  if (x.isNaN()) { throw InvalidConversionException() }
+  else if (!(x > -1.0 && x < 18446744073709551616.0)) { throw IntOverflowException() }
+  else if (x < Long.MAX_VALUE.toDouble()) { x.toLong() }
+  else { (x - Long.MAX_VALUE.toDouble()).toLong() + Long.MIN_VALUE }
+
+// math.min/max/floor/ceil/trunc don't canonicalize NaNs
+// but wasm does
+fun MIN(a: Float, b: Float): Float = Float.fromBits(kotlin.math.min(a, b).toBits())
+fun MAX(a: Float, b: Float): Float = Float.fromBits(kotlin.math.max(a, b).toBits())
+fun MIN(a: Double, b: Double): Double = Double.fromBits(kotlin.math.min(a, b).toBits())
+fun MAX(a: Double, b: Double): Double = Double.fromBits(kotlin.math.max(a, b).toBits())
+
+fun floor(x: Float): Float = Float.fromBits(kotlin.math.floor(x).toBits())
+fun ceil(x: Float): Float = Float.fromBits(kotlin.math.ceil(x).toBits())
+fun floor(x: Double): Double = Double.fromBits(kotlin.math.floor(x).toBits())
+fun ceil(x: Double): Double = Double.fromBits(kotlin.math.ceil(x).toBits())
+
+fun truncate(x: Float): Float = Float.fromBits(kotlin.math.truncate(x).toBits())
+fun truncate(x: Double): Double = Double.fromBits(kotlin.math.truncate(x).toBits())
+
+// JVM docs say Math.abs is equivalent to these
+// but it doesn't hold for NaNs for some reason
+fun abs(x: Double): Double = Double.fromBits(x.toRawBits() and Long.MAX_VALUE)
+fun abs(x: Float): Float = Float.fromBits(x.toRawBits() and Int.MAX_VALUE)
