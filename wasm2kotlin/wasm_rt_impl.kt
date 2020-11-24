@@ -154,6 +154,7 @@ fun grow_memory(memory: KMutableProperty0<Memory>, add_pages: Int): Int {
 private var func_types_by_nresults: HashMap<Pair<Int, List<Any>>, Int> = HashMap<Pair<Int, List<Any>>, Int>()
 
 fun register_func_type(num_params: Int, num_results: Int, vararg types: Any): Int {
+    assert(num_params + num_results == types.size)
     synchronized (func_types_by_nresults) {
         val maybe_id: Int = func_types_by_nresults.size
         val id: Int = func_types_by_nresults.getOrPut(Pair(num_results, types.toList())) { maybe_id }
@@ -271,6 +272,11 @@ fun ULongToDouble(a: Long): Double {
     }
     return a.toDouble()
 }
+
+fun I32_ROTL(x: Int , y: Int ) = (((x) shl ((y) and (31))) or ((x) ushr (((31) - (y) + 1) and (31))))
+fun I64_ROTL(x: Long, y: Long) = (((x) shl ((y.toInt()) and (63))) or ((x) ushr (((63) - (y.toInt()) + 1) and (63))))
+fun I32_ROTR(x: Int , y: Int ) = (((x) ushr ((y) and (31))) or ((x) shl (((31) - (y) + 1) and (31))))
+fun I64_ROTR(x: Long, y: Long) = (((x) ushr ((y.toInt()) and (63))) or ((x) shl (((63) - (y.toInt()) + 1) and (63))))
 
 fun I32_TRUNC_S_F32(a: Float ): Int  = throw WasmException("UNIMPLEMENTED")
 fun I64_TRUNC_S_F32(a: Float ): Long = throw WasmException("UNIMPLEMENTED")
