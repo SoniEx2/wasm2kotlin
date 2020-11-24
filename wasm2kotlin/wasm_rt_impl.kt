@@ -299,17 +299,23 @@ fun UIntToDouble(a: Int): Double {
 }
 fun ULongToFloat(a: Long): Float {
     if (a < 0L) {
-        // FIXME(Soni): ???
-        // TODO(Soni): go bitwise
-        return a.toFloat() + 1.8446744073709552e+19f
+        val b = ((a shl 1) ushr 40).toInt();
+        val ismiddle = (a and 0xFFFFFFFFFFL) == 0x8000000000L;
+        if (ismiddle) {
+            return Float.fromBits(((b ushr 1) or 0x5f000000) + ((b and 2) ushr 1))
+        }
+        return Float.fromBits(((b ushr 1) or 0x5f000000) + (b and 1))
     }
     return a.toFloat()
 }
 fun ULongToDouble(a: Long): Double {
     if (a < 0L) {
-        // FIXME(Soni): ???
-        // TODO(Soni): go bitwise
-        return a.toDouble() + 1.8446744073709552e+19
+        val b = (a shl 1) ushr 11;
+        val ismiddle = (a and 0x4FFL) == 0x400L;
+        if (ismiddle) {
+            return Double.fromBits(((b ushr 1) or 0x43e0000000000000L) + ((b and 2) ushr 1))
+        }
+        return Double.fromBits(((b ushr 1) or 0x43e0000000000000L) + (b and 1))
     }
     return a.toDouble()
 }
