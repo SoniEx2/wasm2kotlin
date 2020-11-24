@@ -139,17 +139,17 @@ TOOLS = {
         ('RUN', '%(gen_spec_js_py)s %(temp_file)s.json'),
         ('VERBOSE-ARGS', ['--print-cmd', '-v']),
     ],
-    #'run-spec-wasm2c': [
-    #    ('RUN', 'test/run-spec-wasm2c.py'),
-    #    ('ARGS', [
-    #        '%(in_file)s',
-    #        '--bindir=%(bindir)s',
-    #        '--no-error-cmdline',
-    #        '-o',
-    #        '%(out_dir)s',
-    #    ]),
-    #    ('VERBOSE-ARGS', ['--print-cmd', '-v']),
-    #],
+    'run-spec-wasm2c': [
+        ('RUN', 'test/run-spec-wasm2c.py'),
+        ('ARGS', [
+            '%(in_file)s',
+            '--bindir=%(bindir)s',
+            '--no-error-cmdline',
+            '-o',
+            '%(out_dir)s',
+        ]),
+        ('VERBOSE-ARGS', ['--print-cmd', '-v']),
+    ],
     'run-spec-wasm2kotlin': [
         ('RUN', 'test/run-spec-wasm2kotlin.py'),
         ('ARGS', [
