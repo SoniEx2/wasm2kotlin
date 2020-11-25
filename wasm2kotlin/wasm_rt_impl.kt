@@ -311,7 +311,7 @@ fun ULongToFloat(a: Long): Float {
 fun ULongToDouble(a: Long): Double {
     if (a < 0L) {
         val b = (a shl 1) ushr 11;
-        val ismiddle = (a and 0x4FFL) == 0x400L;
+        val ismiddle = (a and 0x7FFL) == 0x400L;
         if (ismiddle) {
             return Double.fromBits(((b ushr 1) or 0x43e0000000000000L) + ((b and 2) ushr 1))
         }
