@@ -775,8 +775,11 @@ void KotlinWriter::Write(const Const& const_) {
         // Negative zero. Special-cased so it isn't written as -0 below.
         Writef("-0.0");
       } else {
-        // FIXME(Soni): this is seemingly broken?
-        Writef("%#.17g", Bitcast<double>(f64_bits));
+        std::string printed = StringPrintf("%#.17g", Bitcast<double>(f64_bits));
+        Write(printed);
+        if (printed.back() == '.') {
+          Write("0");
+        }
       }
       break;
     }
