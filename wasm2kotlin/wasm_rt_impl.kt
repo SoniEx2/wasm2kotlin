@@ -53,12 +53,17 @@ class Memory(initial_pages: Int, max_pages: Int) {
     val pages: Int
         get() = mem.capacity() / PAGE_SIZE;
 
-    // size is unnecessary, but...
-    fun put(offset: Int, bytes: ByteArray, size: Int) {
-        // independent position
-        val indep = mem.duplicate()
-        indep.position(offset)
-        indep.put(bytes, 0, size)
+    fun put(offset: Int, bytes_as_ucs2: String, size: Int) {
+        val temp = mem.duplicate()
+        // duplicate resets byte order
+        temp.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        temp.position(offset)
+        val cb = temp.asCharBuffer();
+        cb.put(bytes_as_ucs2, 0, size/2);
+        if (size/2 != bytes_as_ucs2.length) {
+            // size is odd, so we have an extra byte
+            temp.put(size-1, bytes_as_ucs2[size/2].toByte())
+        }
     }
 
     // converts native index out of bounds into wasm2kotlin exceptions
@@ -117,6 +122,7 @@ class Memory(initial_pages: Int, max_pages: Int) {
         val total_pages = old_pages + new_pages;
         mem = java.nio.ByteBuffer.allocate(total_pages * PAGE_SIZE);
         mem.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        // NOTE: duplicate resets byte order but it's fine here
         mem.duplicate().put(old_mem)
         return old_pages;
     }

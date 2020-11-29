@@ -1074,16 +1074,22 @@ void KotlinWriter::WriteDataInitializers() {
     } else {
       for (const DataSegment* data_segment : module_->data_segments) {
         Write(Newline(), "private val data_segment_data_",
-              data_segment_index, ": ByteArray = byteArrayOf(");
+              data_segment_index, ": String = \"");
         size_t i = 0;
+        uint8_t bottom = 0;
         for (uint8_t x : data_segment->data) {
-          Writef("%hhd, ", x);
-          if ((++i % 12) == 0)
-            Write(Newline());
+          if ((i++ % 2) == 0) {
+            Write("\\u");
+            bottom = x;
+          } else {
+            // NOTE(Soni): we *want* these swapped because reasons
+            Writef("%02hhx%02hhx", x, bottom);
+          }
         }
-        if (i > 0)
-          Write(Newline());
-        Write(");", Newline());
+        if ((i % 2) == 1) {
+          Writef("00%02hhx", bottom);
+        }
+        Write("\";", Newline());
         ++data_segment_index;
       }
     }
@@ -1213,7 +1219,7 @@ void KotlinWriter::WriteExports() {
 }
 
 void KotlinWriter::WriteInit() {
-  Write(Newline(), "init", OpenBrace());
+  Write(Newline(), "init ", OpenBrace());
   for (Var* var : module_->starts) {
     Write(GetGlobalName(module_->GetFunc(*var)->name), "();", Newline());
   }
