@@ -861,7 +861,7 @@ void KotlinWriter::WriteFuncTypes() {
   Write(Newline());
   Writef("private val func_types: IntArray = IntArray(%" PRIzd ")", module_->types.size());
   Write(Newline(), Newline());
-  Write("init {", Newline());
+  Write("init /* func_types */ {", Newline());
   Index func_type_index = 0;
   for (TypeEntry* type : module_->types) {
     FuncType* func_type = cast<FuncType>(type);
@@ -1162,7 +1162,7 @@ void KotlinWriter::WriteExports() {
 
   Write(Newline());
 
-  Write("init ", OpenBrace());
+  Write("init /* exports */ ", OpenBrace());
 
   for (const Export* export_ : module_->exports) {
     Write("/* export: '", export_->name, "' */", Newline());
