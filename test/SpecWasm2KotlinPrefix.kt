@@ -103,25 +103,23 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
   /*
    * spectest implementations
    */
-  var spectest_print = fun() {
+  fun spectest_print() {
     print("spectest.print()\n");
   }
   
-  var spectest_print_i32 = fun(i: Int) {
+  fun spectest_print_i32(i: Int) {
     print("spectest.print_i32(");
     print(i);
     print(")\n");
   }
   
-  var spectest_print_f32 = fun(f: Float) {
-    //printf("spectest.print_f32(%g)\n", f);
+  fun spectest_print_f32(f: Float) {
     print("spectest.print_f32(");
     print(f);
     print(")\n");
   }
   
-  var spectest_print_i32_f32 = fun(i: Int, f: Float) {
-    //printf("spectest.print_i32_f32(%d %g)\n", i, f);
+  fun spectest_print_i32_f32(i: Int, f: Float) {
     print("spectest.print_i32_f32(");
     print(i);
     print(" ");
@@ -129,15 +127,13 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
     print(")\n");
   }
   
-  var spectest_print_f64 = fun(d: Double) {
-    //printf("spectest.print_f64(%g)\n", d);
+  fun spectest_print_f64(d: Double) {
     print("spectest.print_f64(");
     print(d);
     print(")\n");
   }
   
-  var spectest_print_f64_f64 = fun(d1: Double, d2: Double) {
-    //printf("spectest.print_f64_f64(%g %g)\n", d1, d2);
+  fun spectest_print_f64_f64(d1: Double, d2: Double) {
     print("spectest.print_f64_f64(");
     print(d1);
     print(" ");

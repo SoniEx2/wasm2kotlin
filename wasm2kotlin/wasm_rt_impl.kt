@@ -1,7 +1,7 @@
 package wasm_rt_impl;
 
 import kotlin.reflect.KMutableProperty0
-import kotlin.reflect.KFunction
+import kotlin.Function
 
 class ModuleRegistry {
     private var funcs: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
@@ -9,7 +9,8 @@ class ModuleRegistry {
     private var globals: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
     private var memories: HashMap<Pair<String, String>, KMutableProperty0<Memory>> = HashMap<Pair<String, String>, KMutableProperty0<Memory>>();
 
-    fun <T> exportFunc(modname: String, fieldname: String, value: KMutableProperty0<T>) {
+    // TODO don't allow duplicate exports
+    fun <T> exportFunc(modname: String, fieldname: String, value: Function<T>) {
         funcs.put(Pair(modname, fieldname), value)
     }
     fun exportTable(modname: String, fieldname: String, value: KMutableProperty0<Table>) {
@@ -23,8 +24,8 @@ class ModuleRegistry {
     }
 
     // TODO add exceptions
-    fun <T> importFunc(modname: String, fieldname: String): KMutableProperty0<T> {
-        return funcs.get(Pair(modname, fieldname)) as KMutableProperty0<T>
+    fun <T: Function<U>, U> importFunc(modname: String, fieldname: String): T {
+        return funcs.get(Pair(modname, fieldname)) as T
     }
     fun importTable(modname: String, fieldname: String): KMutableProperty0<Table> {
         return tables.get(Pair(modname, fieldname)) as KMutableProperty0<Table>
@@ -62,7 +63,7 @@ class Memory(initial_pages: Int, max_pages: Int) {
         cb.put(bytes_as_ucs2, 0, size/2);
         if (size/2 != bytes_as_ucs2.length) {
             // size is odd, so we have an extra byte
-            temp.put(size-1, bytes_as_ucs2[size/2].toByte())
+            temp.put(offset+size-1, bytes_as_ucs2[size/2].toByte())
         }
     }
 
@@ -155,7 +156,7 @@ class Table(elements: Int, max_elements: Int) {
     }
 }
 
-data class Elem(val type: Int, val func: KMutableProperty0<out Any>) {
+data class Elem(val type: Int, val func: Function<out Any>) {
 }
 
 open class WasmException(message: String? = null, cause: Throwable? = null) : RuntimeException(message, cause) {
@@ -251,7 +252,7 @@ fun <T> CALL_INDIRECT(table: Table, type: Int, func: Int): T {
         throw CallIndirectException()
     }
     if (elem.type == type) {
-        return elem.func.get() as T
+        return elem.func as T
     } else {
         throw CallIndirectException()
     }

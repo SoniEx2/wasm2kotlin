@@ -218,10 +218,10 @@ class KotlinWriter {
   void WriteSourceBottom();
   void WriteFuncTypes();
   //void WriteModuleImports();
-  void WriteImport(const char*, const std::string&, const std::string&);
+  void WriteImport(const char*, const std::string&, const std::string&, bool);
   void WriteImports();
   void WriteFuncType(const FuncDeclaration&);
-  void WriteFuncDeclarations();
+  void AllocateFuncs();
   void WriteGlobals();
   void WriteGlobal(const Global&, const std::string&);
   void WriteMemories();
@@ -847,8 +847,13 @@ void KotlinWriter::WriteSourceTop() {
 //  return iter->second;
 //}
 
-void KotlinWriter::WriteImport(const char* type, const std::string& module, const std::string& mangled) {
-  Write(" by moduleRegistry.import", type, "(\"");
+void KotlinWriter::WriteImport(const char* type, const std::string& module, const std::string& mangled, bool delegate) {
+  if (delegate) {
+    Write(" by ");
+  } else {
+    Write(" = ");
+  }
+  Write("moduleRegistry.import", type, "(\"");
   Write(MangleName(module), "\", \"", mangled, "\");");
 }
 
@@ -896,6 +901,7 @@ void KotlinWriter::WriteImports() {
     Write("private var ");
     std::string mangled;
     const char *type;
+    bool delegate = true;
     switch (import->kind()) {
       case ExternalKind::Func: {
         const Func& func = cast<FuncImport>(import)->func;
@@ -909,6 +915,7 @@ void KotlinWriter::WriteImports() {
         Write(name, ": ");
         WriteFuncType(func.decl);
         type = "Func";
+        delegate = false;
         break;
       }
 
@@ -944,7 +951,7 @@ void KotlinWriter::WriteImports() {
       default:
         WABT_UNREACHABLE;
     }
-    WriteImport(type, import->module_name, mangled);
+    WriteImport(type, import->module_name, mangled, delegate);
 
     Write(Newline());
   }
@@ -961,21 +968,15 @@ void KotlinWriter::WriteFuncType(const FuncDeclaration& decl) {
   Write(") -> ", ResultType(decl.sig.result_types));
 }
 
-void KotlinWriter::WriteFuncDeclarations() {
+void KotlinWriter::AllocateFuncs() {
   if (module_->funcs.size() == module_->num_func_imports)
     return;
-
-  Write(Newline());
 
   Index func_index = 0;
   for (const Func* func : module_->funcs) {
     bool is_import = func_index < module_->num_func_imports;
     if (!is_import) {
-      Write("private var ");
-      std::string name = DefineGlobalScopeName(func->name, Type::Func);
-      Write(name, ": ");
-      WriteFuncType(func->decl);
-      Write(";", Newline());
+      DefineGlobalScopeName(func->name, Type::Func);
     }
     ++func_index;
   }
@@ -1144,10 +1145,17 @@ void KotlinWriter::WriteElemInitializers() {
       assert(elem_expr.kind == ElemExprKind::RefFunc);
       const Func* func = module_->GetFunc(elem_expr.var);
       Index func_type_index = module_->GetFuncTypeIndex(func->decl.type_var);
+      bool is_import = import_syms_.count(func->name) != 0;
 
       Write(GetGlobalName(table->name), "[offset + ", i,
             "] = wasm_rt_impl.Elem(func_types[", func_type_index,
-            "], ", ExternalPtr(func->name), ");", Newline());
+            "], ");
+      if (!is_import) {
+        Write(ExternalPtr(func->name));
+      } else {
+        Write(GlobalName(func->name));
+      }
+      Write(");", Newline());
       ++i;
     }
     ++elem_segment_index;
@@ -1170,6 +1178,7 @@ void KotlinWriter::WriteExports() {
     std::string mangled_name;
     std::string internal_name;
     const char* type;
+    bool external_ptr = true;
 
     switch (export_->kind) {
       case ExternalKind::Func: {
@@ -1178,6 +1187,7 @@ void KotlinWriter::WriteExports() {
             ExportName(MangleFuncName(export_->name, func->decl.sig.param_types,
                                       func->decl.sig.result_types));
         internal_name = func->name;
+        external_ptr = import_syms_.count(func->name) == 0;
         type = "Func";
         break;
       }
@@ -1210,7 +1220,13 @@ void KotlinWriter::WriteExports() {
       default:
         WABT_UNREACHABLE;
     }
-    Write("moduleRegistry.export", type, "(name, \"", mangled_name, "\", ", ExternalPtr(internal_name), ");");
+    Write("moduleRegistry.export", type, "(name, \"", mangled_name, "\", ");
+    if (external_ptr) {
+      Write(ExternalPtr(internal_name));
+    } else {
+      Write(GlobalName(internal_name));
+    }
+    Write(");");
 
     Write(Newline());
   }
@@ -1227,7 +1243,7 @@ void KotlinWriter::WriteInit() {
 }
 
 void KotlinWriter::WriteFuncs() {
-  Write(Newline(), "init /* functions */ ", OpenBrace());
+  Write(Newline());
   Index func_index = 0;
   for (const Func* func : module_->funcs) {
     bool is_import = func_index < module_->num_func_imports;
@@ -1235,7 +1251,6 @@ void KotlinWriter::WriteFuncs() {
       Write(Newline(), *func, Newline());
     ++func_index;
   }
-  Write(CloseBrace());
 }
 
 void KotlinWriter::Write(const Func& func) {
@@ -1250,7 +1265,7 @@ void KotlinWriter::Write(const Func& func) {
   MakeTypeBindingReverseMapping(func_->GetNumParamsAndLocals(), func_->bindings,
                                 &index_to_name);
 
-  Write(GlobalName(func.name), " = fun(");
+  Write("fun ", GlobalName(func.name), "(");
   WriteParams(index_to_name, to_shadow);
   Write(": ", ResultType(func.decl.sig.result_types), OpenBrace());
   WriteLocals(index_to_name, to_shadow);
@@ -1419,9 +1434,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
           Write(StackVar(num_params - 1, func.GetResultType(0)), " = ");
         }
 
-        // FIXME(Soni): ugh
-        // FIXME(Soni): make functions stop being vars tbh
-        Write("(", ExternalPtr(var.name()), ").get()(");
+        Write(GlobalName(var.name()), "(");
         for (Index i = 0; i < num_params; ++i) {
           if (i != 0) {
             Write(", ");
@@ -2272,7 +2285,7 @@ void KotlinWriter::WriteKotlinSource() {
   WriteSourceTop();
   WriteFuncTypes();
   WriteImports();
-  WriteFuncDeclarations();
+  AllocateFuncs();
   WriteGlobals();
   WriteMemories();
   WriteTables();

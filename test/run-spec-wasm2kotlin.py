@@ -340,9 +340,10 @@ class CWriter(object):
         result_types = [result['type'] for result in expected]
         arg_types = [arg['type'] for arg in action.get('args', [])]
         if type_ == 'invoke':
-            return "(" + KotlinTypes(arg_types, "") + ") -> " + KotlinTypes(result_types, "Unit")
+            ret = KotlinTypes(result_types, "Unit")
+            return "(" + KotlinTypes(arg_types, "") + ") -> " + ret, ret
         elif type_ == 'get':
-            return KotlinType(result_types[0])
+            return (KotlinType(result_types[0]),)*2
         else:
             raise Error('Unexpected action type: %s' % type_)
 
@@ -352,9 +353,9 @@ class CWriter(object):
         type_ = action['type']
         mangled_module_name = self.GetModulePrefix(action.get('module'))
         field = (MangleName(action['field']) + MangleName(self._ActionSig(action, expected)))
-        sig = self._KotlinSig(action, expected)
+        sig, ret = self._KotlinSig(action, expected)
         if type_ == 'invoke':
-            return 'moduleRegistry.importFunc<%s>("%s", "%s").get()(%s)' % (sig, mangled_module_name, field, self._ConstantList(action.get('args', [])))
+            return 'moduleRegistry.importFunc<%s, %s>("%s", "%s")(%s)' % (sig, ret, mangled_module_name, field, self._ConstantList(action.get('args', [])))
         elif type_ == 'get':
             return 'moduleRegistry.importGlobal<%s>("%s", "%s").get()' % (sig, mangled_module_name, field)
         else:
