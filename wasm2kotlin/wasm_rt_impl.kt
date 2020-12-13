@@ -206,33 +206,6 @@ fun register_func_type(num_params: Int, num_results: Int, vararg types: Any): In
     }
 }
 
-fun i32_store(memory: KMutableProperty0<Memory>, position: Long, value: Int) = memory.get().i32_store(position, value)
-fun i64_store(memory: KMutableProperty0<Memory>, position: Long, value: Long) = memory.get().i64_store(position, value)
-fun f32_store(memory: KMutableProperty0<Memory>, position: Long, value: Float) = memory.get().f32_store(position, value)
-fun f64_store(memory: KMutableProperty0<Memory>, position: Long, value: Double) = memory.get().f64_store(position, value)
-
-fun i32_store8(memory: KMutableProperty0<Memory>, position: Long, value: Int)   = memory.get().i32_store8(position, value)
-fun i64_store8(memory: KMutableProperty0<Memory>, position: Long, value: Long)  = memory.get().i64_store8(position, value)
-fun i32_store16(memory: KMutableProperty0<Memory>, position: Long, value: Int)  = memory.get().i32_store16(position, value)
-fun i64_store16(memory: KMutableProperty0<Memory>, position: Long, value: Long) = memory.get().i64_store16(position, value)
-fun i64_store32(memory: KMutableProperty0<Memory>, position: Long, value: Long) = memory.get().i64_store32(position, value)
-
-fun i32_load(memory: KMutableProperty0<Memory>, position: Long): Int = memory.get().i32_load(position)
-fun i64_load(memory: KMutableProperty0<Memory>, position: Long): Long = memory.get().i64_load(position)
-fun f32_load(memory: KMutableProperty0<Memory>, position: Long): Float = memory.get().f32_load(position)
-fun f64_load(memory: KMutableProperty0<Memory>, position: Long): Double = memory.get().f64_load(position)
-
-fun i32_load8_s(memory: KMutableProperty0<Memory>, position: Long): Int   = memory.get().i32_load8_s(position)
-fun i64_load8_s(memory: KMutableProperty0<Memory>, position: Long): Long  = memory.get().i64_load8_s(position)
-fun i32_load8_u(memory: KMutableProperty0<Memory>, position: Long): Int   = memory.get().i32_load8_u(position)
-fun i64_load8_u(memory: KMutableProperty0<Memory>, position: Long): Long  = memory.get().i64_load8_u(position)
-fun i32_load16_s(memory: KMutableProperty0<Memory>, position: Long): Int  = memory.get().i32_load16_s(position)
-fun i64_load16_s(memory: KMutableProperty0<Memory>, position: Long): Long = memory.get().i64_load16_s(position)
-fun i32_load16_u(memory: KMutableProperty0<Memory>, position: Long): Int  = memory.get().i32_load16_u(position)
-fun i64_load16_u(memory: KMutableProperty0<Memory>, position: Long): Long = memory.get().i64_load16_u(position)
-fun i64_load32_s(memory: KMutableProperty0<Memory>, position: Long): Long = memory.get().i64_load32_s(position)
-fun i64_load32_u(memory: KMutableProperty0<Memory>, position: Long): Long = memory.get().i64_load32_u(position)
-
 // NOTE(Soni): these are inline not for "performance" but for code size.
 // kept running into "Method too large", this should help with *some* of them.
 inline fun Boolean.btoInt(): Int = if (this) 1 else 0

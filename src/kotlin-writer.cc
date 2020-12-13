@@ -2086,8 +2086,8 @@ void KotlinWriter::Write(const LoadExpr& expr) {
   }
 
   Type result_type = expr.opcode.GetResultType();
-  Write(StackVar(0, result_type), " = wasm_rt_impl.", func, "(", ExternalPtr(memory->name),
-        ", (", StackVar(0), ".toLong() and ", mask, ")");
+  Write(StackVar(0, result_type), " = ", GlobalName(memory->name), ".", func, "(",
+        "(", StackVar(0), ".toLong() and ", mask, ")");
   if (expr.offset != 0)
     Write(" + ", expr.offset, "L");
   Write(");", Newline());
@@ -2123,8 +2123,8 @@ void KotlinWriter::Write(const StoreExpr& expr) {
       WABT_UNREACHABLE;
   }
 
-  Write("wasm_rt_impl.", func, "(", ExternalPtr(memory->name),
-        ", (", StackVar(1), ".toLong() and ", mask, ")");
+  Write(GlobalName(memory->name), ".", func, "(",
+        "(", StackVar(1), ".toLong() and ", mask, ")");
   if (expr.offset != 0)
     Write(" + ", expr.offset, "L");
   Write(", ", StackVar(0), ");", Newline());
