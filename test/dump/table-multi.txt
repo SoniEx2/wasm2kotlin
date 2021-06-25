@@ -5,14 +5,14 @@
   (func (param i32))
   (table anyfunc (elem 0))
   (table anyfunc (elem 0)))
-(;; STDOUT ;;;
+(;; STDERR ;;;
 0000000: 0061 736d                                 ; WASM_BINARY_MAGIC
 0000004: 0100 0000                                 ; WASM_BINARY_VERSION
 ; section "Type" (1)
 0000008: 01                                        ; section code
 0000009: 00                                        ; section size (guess)
 000000a: 01                                        ; num types
-; type 0
+; func type 0
 000000b: 60                                        ; func
 000000c: 01                                        ; num params
 000000d: 7f                                        ; i32
@@ -77,6 +77,8 @@
 0000033: 04                                        ; FIXUP section size
 ; move data: [32, 38) -> [2f, 35)
 ; truncate to 53 (0x35)
+;;; STDERR ;;)
+(;; STDOUT ;;;
 
 table-multi.wasm:	file format wasm 0x1
 

@@ -43,8 +43,10 @@
 #define WABT_USE(x) static_cast<void>(x)
 
 #define WABT_PAGE_SIZE 0x10000 /* 64k */
-#define WABT_MAX_PAGES 0x10000 /* # of pages that fit in 32-bit address space \
-                                */
+#define WABT_MAX_PAGES32 0x10000 /* # of pages that fit in 32-bit address \
+                                    space */
+#define WABT_MAX_PAGES64 0x1000000000000 /* # of pages that fit in 64-bit \
+                                            address space */
 #define WABT_BYTES_TO_PAGES(x) ((x) >> 16)
 #define WABT_ALIGN_UP_TO_PAGE(x) \
   (((x) + WABT_PAGE_SIZE - 1) & ~(WABT_PAGE_SIZE - 1))
@@ -101,6 +103,22 @@
 #define PRIaddress PRIu64
 #define PRIoffset PRIzx
 
+namespace wabt {
+#if WABT_BIG_ENDIAN
+  inline void MemcpyEndianAware(void *dst, const void *src, size_t dsize, size_t ssize, size_t doff, size_t soff, size_t len) {
+    memcpy(static_cast<char*>(dst) + (dsize) - (len) - (doff),
+      static_cast<const char*>(src) + (ssize) - (len) - (soff),
+      (len));
+  }
+#else
+  inline void MemcpyEndianAware(void *dst, const void *src, size_t dsize, size_t ssize, size_t doff, size_t soff, size_t len) {
+    memcpy(static_cast<char*>(dst) + (doff),
+      static_cast<const char*>(src) + (soff),
+      (len));
+  }
+#endif
+}
+
 struct v128 {
   v128() = default;
   v128(uint32_t x0, uint32_t x1, uint32_t x2, uint32_t x3) {
@@ -140,7 +158,7 @@ struct v128 {
     static_assert(sizeof(T) <= sizeof(v), "Invalid cast!");
     assert((lane + 1) * sizeof(T) <= sizeof(v));
     T result;
-    memcpy(&result, &v[lane * sizeof(T)], sizeof(result));
+    wabt::MemcpyEndianAware(&result, v, sizeof(result), sizeof(v), 0, lane * sizeof(T), sizeof(result));
     return result;
   }
 
@@ -148,7 +166,7 @@ struct v128 {
   void From(int lane, T data) {
     static_assert(sizeof(T) <= sizeof(v), "Invalid cast!");
     assert((lane + 1) * sizeof(T) <= sizeof(v));
-    memcpy(&v[lane * sizeof(T)], &data, sizeof(data));
+    wabt::MemcpyEndianAware(v, &data, sizeof(v), sizeof(data), lane * sizeof(T), 0, sizeof(data));
   }
 
   uint8_t v[16];
@@ -212,9 +230,10 @@ enum class LabelType {
   Else,
   Try,
   Catch,
+  Unwind,
 
   First = Func,
-  Last = Catch,
+  Last = Unwind,
 };
 static const int kLabelTypeCount = WABT_ENUM_COUNT(LabelType);
 
@@ -283,9 +302,8 @@ enum class RelocType {
   GlobalIndexLEB = 7,     // e.g. Immediate of get_global inst
   FunctionOffsetI32 = 8,  // e.g. Code offset in DWARF metadata
   SectionOffsetI32 = 9,   // e.g. Section offset in DWARF metadata
-  EventIndexLEB = 10,     // Used in throw instructions
-  MemoryAddressRelSLEB =
-      11,  // In PIC code, data address relative to __memory_base
+  TagIndexLEB = 10,       // Used in throw instructions
+  MemoryAddressRelSLEB = 11,  // In PIC code, addr relative to __memory_base
   TableIndexRelSLEB = 12,   // In PIC code, table index relative to __table_base
   GlobalIndexI32 = 13,      // e.g. Global index in data (e.g. DWARF)
   MemoryAddressLEB64 = 14,  // Memory64: Like MemoryAddressLEB
@@ -294,10 +312,12 @@ enum class RelocType {
   MemoryAddressRelSLEB64 = 17,  // Memory64: Like MemoryAddressRelSLEB
   TableIndexSLEB64 = 18,        // Memory64: Like TableIndexSLEB
   TableIndexI64 = 19,           // Memory64: Like TableIndexI32
-  TableNumberLEB = 20,    // e.g. Immediate of table.get
+  TableNumberLEB = 20,          // e.g. Immediate of table.get
+  MemoryAddressTLSSLEB = 21,    // Address relative to __tls_base
+  MemoryAddressTLSI32 = 22,     // Address relative to __tls_base
 
   First = FuncIndexLEB,
-  Last = TableNumberLEB,
+  Last = MemoryAddressTLSI32,
 };
 static const int kRelocTypeCount = WABT_ENUM_COUNT(RelocType);
 
@@ -322,7 +342,7 @@ enum class SymbolType {
   Data = 1,
   Global = 2,
   Section = 3,
-  Event = 4,
+  Tag = 4,
   Table = 5,
 };
 
@@ -338,6 +358,10 @@ enum class ComdatType {
 #define WABT_SYMBOL_FLAG_EXPLICIT_NAME 0x40
 #define WABT_SYMBOL_FLAG_NO_STRIP 0x80
 #define WABT_SYMBOL_FLAG_MAX 0xff
+
+#define WABT_SEGMENT_FLAG_STRINGS 0x1
+#define WABT_SEGMENT_FLAG_TLS 0x2
+#define WABT_SEGMENT_FLAG_MAX 0xff
 
 enum class SymbolVisibility {
   Default = 0,
@@ -356,10 +380,10 @@ enum class ExternalKind {
   Table = 1,
   Memory = 2,
   Global = 3,
-  Event = 4,
+  Tag = 4,
 
   First = Func,
-  Last = Event,
+  Last = Tag,
 };
 static const int kExternalKindCount = WABT_ENUM_COUNT(ExternalKind);
 
@@ -376,6 +400,7 @@ struct Limits {
         has_max(true),
         is_shared(is_shared),
         is_64(is_64) {}
+  Type IndexType() const { return is_64 ? Type::I64 : Type::I32; }
 
   uint64_t initial = 0;
   uint64_t max = 0;
@@ -395,7 +420,7 @@ void InitStdio();
 extern const char* g_kind_name[];
 
 static WABT_INLINE const char* GetKindName(ExternalKind kind) {
-  return static_cast<int>(kind) < kExternalKindCount
+  return static_cast<size_t>(kind) < kExternalKindCount
     ? g_kind_name[static_cast<size_t>(kind)]
     : "<error_kind>";
 }
@@ -405,7 +430,7 @@ static WABT_INLINE const char* GetKindName(ExternalKind kind) {
 extern const char* g_reloc_type_name[];
 
 static WABT_INLINE const char* GetRelocTypeName(RelocType reloc) {
-  return static_cast<int>(reloc) < kRelocTypeCount
+  return static_cast<size_t>(reloc) < kRelocTypeCount
     ? g_reloc_type_name[static_cast<size_t>(reloc)]
     : "<error_reloc_type>";
 }
@@ -422,8 +447,8 @@ static WABT_INLINE const char* GetSymbolTypeName(SymbolType type) {
       return "data";
     case SymbolType::Section:
       return "section";
-    case SymbolType::Event:
-      return "event";
+    case SymbolType::Tag:
+      return "tag";
     case SymbolType::Table:
       return "table";
     default:
@@ -446,6 +471,13 @@ inline void ConvertBackslashToSlash(char* s) {
 
 inline void ConvertBackslashToSlash(std::string* s) {
   ConvertBackslashToSlash(s->begin(), s->end());
+}
+
+inline void SwapBytesSized(void *addr, size_t size) {
+  auto bytes = static_cast<uint8_t*>(addr);
+  for (size_t i = 0; i < size / 2; i++) {
+    std::swap(bytes[i], bytes[size-1-i]);
+  }
 }
 
 }  // namespace wabt

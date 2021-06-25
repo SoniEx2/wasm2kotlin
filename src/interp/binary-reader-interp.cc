@@ -195,7 +195,7 @@ class BinaryReaderInterp : public BinaryReaderNop {
   Result OnRefIsNullExpr() override;
   Result OnNopExpr() override;
   Result OnReturnExpr() override;
-  Result OnSelectExpr(Type result_type) override;
+  Result OnSelectExpr(Index result_count, Type* result_types) override;
   Result OnStoreExpr(Opcode opcode,
                      Address alignment_log2,
                      Address offset) override;
@@ -212,10 +212,21 @@ class BinaryReaderInterp : public BinaryReaderNop {
   Result OnUnreachableExpr() override;
   Result EndFunctionBody(Index index) override;
   Result OnSimdLaneOpExpr(Opcode opcode, uint64_t value) override;
+  Result OnSimdLoadLaneExpr(Opcode opcode,
+                            Address alignment_log2,
+                            Address offset,
+                            uint64_t value) override;
+  Result OnSimdStoreLaneExpr(Opcode opcode,
+                             Address alignment_log2,
+                             Address offset,
+                             uint64_t value) override;
   Result OnSimdShuffleOpExpr(Opcode opcode, v128 value) override;
   Result OnLoadSplatExpr(Opcode opcode,
                          Address alignment_log2,
                          Address offset) override;
+  Result OnLoadZeroExpr(Opcode opcode,
+                        Address alignment_log2,
+                        Address offset) override;
 
   Result OnElemSegmentCount(Index count) override;
   Result BeginElemSegment(Index index,
@@ -293,7 +304,7 @@ class BinaryReaderInterp : public BinaryReaderNop {
   std::vector<TableType> table_types_;    // Includes imported and defined.
   std::vector<MemoryType> memory_types_;  // Includes imported and defined.
   std::vector<GlobalType> global_types_;  // Includes imported and defined.
-  std::vector<EventType> event_types_;    // Includes imported and defined.
+  std::vector<TagType> tag_types_;        // Includes imported and defined.
 
   static const Index kMemoryIndex0 = 0;
 
@@ -664,7 +675,7 @@ Result BinaryReaderInterp::OnExport(Index index,
     case ExternalKind::Table:  type = table_types_[item_index].Clone(); break;
     case ExternalKind::Memory: type = memory_types_[item_index].Clone(); break;
     case ExternalKind::Global: type = global_types_[item_index].Clone(); break;
-    case ExternalKind::Event:  type = event_types_[item_index].Clone(); break;
+    case ExternalKind::Tag:    type = tag_types_[item_index].Clone(); break;
   }
   module_.exports.push_back(
       ExportDesc{ExportType(name.to_string(), std::move(type)), item_index});
@@ -758,6 +769,10 @@ Result BinaryReaderInterp::EndDataSegmentInitExpr(Index index) {
   switch (init_expr_.kind) {
     case InitExprKind::I32:
       CHECK_RESULT(validator_.OnDataSegmentInitExpr_Const(loc, ValueType::I32));
+      break;
+
+    case InitExprKind::I64:
+      CHECK_RESULT(validator_.OnDataSegmentInitExpr_Const(loc, ValueType::I64));
       break;
 
     case InitExprKind::GlobalGet:
@@ -888,20 +903,47 @@ Result BinaryReaderInterp::OnSimdLaneOpExpr(Opcode opcode, uint64_t value) {
   return Result::Ok;
 }
 
+uint32_t GetAlignment(Address alignment_log2) {
+  return alignment_log2 < 32 ? 1 << alignment_log2 : ~0u;
+}
+
+Result BinaryReaderInterp::OnSimdLoadLaneExpr(Opcode opcode,
+                                              Address alignment_log2,
+                                              Address offset,
+                                              uint64_t value) {
+  CHECK_RESULT(validator_.OnSimdLoadLane(loc, opcode, GetAlignment(alignment_log2), value));
+  istream_.Emit(opcode, kMemoryIndex0, offset, static_cast<u8>(value));
+  return Result::Ok;
+}
+
+Result BinaryReaderInterp::OnSimdStoreLaneExpr(Opcode opcode,
+                                              Address alignment_log2,
+                                              Address offset,
+                                              uint64_t value) {
+  CHECK_RESULT(validator_.OnSimdStoreLane(loc, opcode,
+                                          GetAlignment(alignment_log2), value));
+  istream_.Emit(opcode, kMemoryIndex0, offset, static_cast<u8>(value));
+  return Result::Ok;
+}
+
 Result BinaryReaderInterp::OnSimdShuffleOpExpr(Opcode opcode, v128 value) {
   CHECK_RESULT(validator_.OnSimdShuffleOp(loc, opcode, value));
   istream_.Emit(opcode, value);
   return Result::Ok;
 }
 
-uint32_t GetAlignment(Address alignment_log2) {
-  return alignment_log2 < 32 ? 1 << alignment_log2 : ~0u;
-}
-
 Result BinaryReaderInterp::OnLoadSplatExpr(Opcode opcode,
                                            Address align_log2,
                                            Address offset) {
   CHECK_RESULT(validator_.OnLoadSplat(loc, opcode, GetAlignment(align_log2)));
+  istream_.Emit(opcode, kMemoryIndex0, offset);
+  return Result::Ok;
+}
+
+Result BinaryReaderInterp::OnLoadZeroExpr(Opcode opcode,
+                                          Address align_log2,
+                                          Address offset) {
+  CHECK_RESULT(validator_.OnLoadZero(loc, opcode, GetAlignment(align_log2)));
   istream_.Emit(opcode, kMemoryIndex0, offset);
   return Result::Ok;
 }
@@ -1260,8 +1302,9 @@ Result BinaryReaderInterp::OnReturnExpr() {
   return Result::Ok;
 }
 
-Result BinaryReaderInterp::OnSelectExpr(Type result_type) {
-  CHECK_RESULT(validator_.OnSelect(loc, result_type));
+Result BinaryReaderInterp::OnSelectExpr(Index result_count,
+                                        Type* result_types) {
+  CHECK_RESULT(validator_.OnSelect(loc, result_count, result_types));
   istream_.Emit(Opcode::Select);
   return Result::Ok;
 }

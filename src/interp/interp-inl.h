@@ -68,7 +68,7 @@ inline MemoryType::MemoryType(Limits limits)
     : ExternType(ExternKind::Memory), limits(limits) {
   // Always set max.
   if (!limits.has_max) {
-    this->limits.max = WABT_MAX_PAGES;
+    this->limits.max = limits.is_64 ? WABT_MAX_PAGES64 : WABT_MAX_PAGES32;
   }
 }
 
@@ -81,14 +81,14 @@ inline bool GlobalType::classof(const ExternType* type) {
 inline GlobalType::GlobalType(ValueType type, Mutability mut)
     : ExternType(ExternKind::Global), type(type), mut(mut) {}
 
-//// EventType ////
+//// TagType ////
 // static
-inline bool EventType::classof(const ExternType* type) {
+inline bool TagType::classof(const ExternType* type) {
   return type->kind == skind;
 }
 
-inline EventType::EventType(EventAttr attr, const ValueTypes& signature)
-    : ExternType(ExternKind::Event), attr(attr), signature(signature) {}
+inline TagType::TagType(TagAttr attr, const ValueTypes& signature)
+    : ExternType(ExternKind::Tag), attr(attr), signature(signature) {}
 
 //// ImportType ////
 inline ImportType::ImportType(std::string module,
@@ -533,7 +533,7 @@ inline bool Extern::classof(const Object* obj) {
     case ObjectKind::Table:
     case ObjectKind::Memory:
     case ObjectKind::Global:
-    case ObjectKind::Event:
+    case ObjectKind::Tag:
       return true;
     default:
       return false;
@@ -633,7 +633,11 @@ inline Memory::Ptr Memory::New(interp::Store& store, MemoryType type) {
 }
 
 inline bool Memory::IsValidAccess(u64 offset, u64 addend, u64 size) const {
-  return offset + addend + size <= data_.size();
+  // FIXME: make this faster.
+  return offset <= data_.size() &&
+         addend <= data_.size() &&
+         size <= data_.size() &&
+         offset + addend + size <= data_.size();
 }
 
 inline bool Memory::IsValidAtomicAccess(u64 offset,
@@ -648,7 +652,7 @@ Result Memory::Load(u64 offset, u64 addend, T* out) const {
   if (!IsValidAccess(offset, addend, sizeof(T))) {
     return Result::Error;
   }
-  memcpy(out, data_.data() + offset + addend, sizeof(T));
+  wabt::MemcpyEndianAware(out, data_.data(), sizeof(T), data_.size(), 0, offset + addend, sizeof(T));
   return Result::Ok;
 }
 
@@ -656,7 +660,7 @@ template <typename T>
 T WABT_VECTORCALL Memory::UnsafeLoad(u64 offset, u64 addend) const {
   assert(IsValidAccess(offset, addend, sizeof(T)));
   T val;
-  memcpy(&val, data_.data() + offset + addend, sizeof(T));
+  wabt::MemcpyEndianAware(&val, data_.data(), sizeof(T), data_.size(), 0, offset + addend, sizeof(T));
   return val;
 }
 
@@ -665,7 +669,7 @@ Result WABT_VECTORCALL Memory::Store(u64 offset, u64 addend, T val) {
   if (!IsValidAccess(offset, addend, sizeof(T))) {
     return Result::Error;
   }
-  memcpy(data_.data() + offset + addend, &val, sizeof(T));
+  wabt::MemcpyEndianAware(data_.data(), &val, data_.size(), sizeof(T), offset + addend, 0, sizeof(T));
   return Result::Ok;
 }
 
@@ -674,7 +678,7 @@ Result Memory::AtomicLoad(u64 offset, u64 addend, T* out) const {
   if (!IsValidAtomicAccess(offset, addend, sizeof(T))) {
     return Result::Error;
   }
-  memcpy(out, data_.data() + offset + addend, sizeof(T));
+  wabt::MemcpyEndianAware(out, data_.data(), sizeof(T), data_.size(), 0, offset + addend, sizeof(T));
   return Result::Ok;
 }
 
@@ -683,7 +687,7 @@ Result Memory::AtomicStore(u64 offset, u64 addend, T val) {
   if (!IsValidAtomicAccess(offset, addend, sizeof(T))) {
     return Result::Error;
   }
-  memcpy(data_.data() + offset + addend, &val, sizeof(T));
+  wabt::MemcpyEndianAware(data_.data(), &val, data_.size(), sizeof(T), offset + addend, 0, sizeof(T));
   return Result::Ok;
 }
 
@@ -778,22 +782,22 @@ inline const GlobalType& Global::type() const {
   return type_;
 }
 
-//// Event ////
+//// Tag ////
 // static
-inline bool Event::classof(const Object* obj) {
+inline bool Tag::classof(const Object* obj) {
   return obj->kind() == skind;
 }
 
 // static
-inline Event::Ptr Event::New(Store& store, EventType type) {
-  return store.Alloc<Event>(store, type);
+inline Tag::Ptr Tag::New(Store& store, TagType type) {
+  return store.Alloc<Tag>(store, type);
 }
 
-inline const ExternType& Event::extern_type() {
+inline const ExternType& Tag::extern_type() {
   return type_;
 }
 
-inline const EventType& Event::type() const {
+inline const TagType& Tag::type() const {
   return type_;
 }
 
@@ -880,8 +884,8 @@ inline const RefVec& Instance::globals() const {
   return globals_;
 }
 
-inline const RefVec& Instance::events() const {
-  return events_;
+inline const RefVec& Instance::tags() const {
+  return tags_;
 }
 
 inline const RefVec& Instance::exports() const {

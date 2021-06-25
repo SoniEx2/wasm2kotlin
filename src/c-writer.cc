@@ -264,8 +264,11 @@ class CWriter {
   void Write(const UnaryExpr&);
   void Write(const TernaryExpr&);
   void Write(const SimdLaneOpExpr&);
+  void Write(const SimdLoadLaneExpr&);
+  void Write(const SimdStoreLaneExpr&);
   void Write(const SimdShuffleOpExpr&);
   void Write(const LoadSplatExpr&);
+  void Write(const LoadZeroExpr&);
 
   const WriteCOptions& options_;
   const Module* module_ = nullptr;
@@ -1033,9 +1036,9 @@ void CWriter::WriteDataInitializers() {
   }
   data_segment_index = 0;
   for (const DataSegment* data_segment : module_->data_segments) {
-    Write("memcpy(&(", ExternalRef(memory->name), ".data[");
+    Write("LOAD_DATA(", ExternalRef(memory->name), ", ");
     WriteInitExpr(data_segment->offset);
-    Write("]), data_segment_data_", data_segment_index, ", ",
+    Write(", data_segment_data_", data_segment_index, ", ",
           data_segment->data.size(), ");", Newline());
     ++data_segment_index;
   }
@@ -1572,6 +1575,16 @@ void CWriter::Write(const ExprList& exprs) {
         break;
       }
 
+      case ExprType::SimdLoadLane: {
+        Write(*cast<SimdLoadLaneExpr>(&expr));
+        break;
+      }
+
+      case ExprType::SimdStoreLane: {
+        Write(*cast<SimdStoreLaneExpr>(&expr));
+        break;
+      }
+
       case ExprType::SimdShuffleOp: {
         Write(*cast<SimdShuffleOpExpr>(&expr));
         break;
@@ -1579,6 +1592,10 @@ void CWriter::Write(const ExprList& exprs) {
 
       case ExprType::LoadSplat:
         Write(*cast<LoadSplatExpr>(&expr));
+        break;
+
+      case ExprType::LoadZero:
+        Write(*cast<LoadZeroExpr>(&expr));
         break;
 
       case ExprType::Unreachable:
@@ -1592,7 +1609,6 @@ void CWriter::Write(const ExprList& exprs) {
       case ExprType::AtomicWait:
       case ExprType::AtomicFence:
       case ExprType::AtomicNotify:
-      case ExprType::BrOnExn:
       case ExprType::Rethrow:
       case ExprType::ReturnCall:
       case ExprType::ReturnCallIndirect:
@@ -1981,7 +1997,7 @@ void CWriter::Write(const LoadExpr& expr) {
     case Opcode::I32Load16S: func = "i32_load16_s"; break;
     case Opcode::I64Load16S: func = "i64_load16_s"; break;
     case Opcode::I32Load16U: func = "i32_load16_u"; break;
-    case Opcode::I64Load16U: func = "i32_load16_u"; break;
+    case Opcode::I64Load16U: func = "i64_load16_u"; break;
     case Opcode::I64Load32S: func = "i64_load32_s"; break;
     case Opcode::I64Load32U: func = "i64_load32_u"; break;
 
@@ -2109,11 +2125,23 @@ void CWriter::Write(const UnaryExpr& expr) {
       break;
 
     case Opcode::I32Extend8S:
+      WriteSimpleUnaryExpr(expr.opcode, "(u32)(s32)(s8)(u8)");
+      break;
+
     case Opcode::I32Extend16S:
+      WriteSimpleUnaryExpr(expr.opcode, "(u32)(s32)(s16)(u16)");
+      break;
+
     case Opcode::I64Extend8S:
+      WriteSimpleUnaryExpr(expr.opcode, "(u64)(s64)(s8)(u8)");
+      break;
+
     case Opcode::I64Extend16S:
+      WriteSimpleUnaryExpr(expr.opcode, "(u64)(s64)(s16)(u16)");
+      break;
+
     case Opcode::I64Extend32S:
-      UNIMPLEMENTED(expr.opcode.GetName());
+      WriteSimpleUnaryExpr(expr.opcode, "(u64)(s64)(s32)(u32)");
       break;
 
     default:
@@ -2172,6 +2200,14 @@ void CWriter::Write(const SimdLaneOpExpr& expr) {
   PushType(result_type);
 }
 
+void CWriter::Write(const SimdLoadLaneExpr& expr) {
+  UNIMPLEMENTED("SIMD support");
+}
+
+void CWriter::Write(const SimdStoreLaneExpr& expr) {
+  UNIMPLEMENTED("SIMD support");
+}
+
 void CWriter::Write(const SimdShuffleOpExpr& expr) {
   Type result_type = expr.opcode.GetResultType();
   Write(StackVar(1, result_type), " = ", expr.opcode.GetName(), "(",
@@ -2194,6 +2230,10 @@ void CWriter::Write(const LoadSplatExpr& expr) {
   Write("));", Newline());
   DropTypes(1);
   PushType(result_type);
+}
+
+void CWriter::Write(const LoadZeroExpr& expr) {
+  UNIMPLEMENTED("SIMD support");
 }
 
 void CWriter::WriteCHeader() {

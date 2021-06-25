@@ -137,14 +137,15 @@ class WastParser {
   Result ParseQuotedText(std::string* text);
   bool ParseOffsetOpt(Address* offset);
   bool ParseAlignOpt(Address* align);
+  Result ParseLimitsIndex(Limits*);
   Result ParseLimits(Limits*);
-  Result ParseNat(uint64_t*);
+  Result ParseNat(uint64_t*, bool is_64);
 
   Result ParseModuleFieldList(Module*);
   Result ParseModuleField(Module*);
   Result ParseDataModuleField(Module*);
   Result ParseElemModuleField(Module*);
-  Result ParseEventModuleField(Module*);
+  Result ParseTagModuleField(Module*);
   Result ParseExportModuleField(Module*);
   Result ParseFuncModuleField(Module*);
   Result ParseTypeModuleField(Module*);
@@ -183,6 +184,8 @@ class WastParser {
   Result ParseBlock(Block*);
   Result ParseExprList(ExprList*);
   Result ParseExpr(ExprList*);
+  Result ParseCatchInstrList(CatchVector* catches);
+  Result ParseCatchExprList(CatchVector* catches);
   Result ParseGlobalType(Global*);
   Result ParseField(Field*);
   Result ParseFieldList(std::vector<Field>*);
@@ -191,6 +194,7 @@ class WastParser {
   Result ParsePlainInstrVar(Location, std::unique_ptr<Expr>*);
   template <typename T>
   Result ParsePlainLoadStoreInstr(Location, Token, std::unique_ptr<Expr>*);
+  Result ParseSimdLane(Location, uint64_t*);
 
   Result ParseCommandList(Script*, CommandPtrVector*);
   Result ParseCommand(Script*, CommandPtr*);

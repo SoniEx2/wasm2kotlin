@@ -273,6 +273,11 @@ T WABT_VECTORCALL FloatMin(T lhs, T rhs) {
 }
 
 template <typename T>
+T WABT_VECTORCALL FloatPMin(T lhs, T rhs) {
+  return std::min(lhs, rhs);
+}
+
+template <typename T>
 T WABT_VECTORCALL FloatMax(T lhs, T rhs) {
   if (WABT_UNLIKELY(std::isnan(lhs) || std::isnan(rhs))) {
     return std::numeric_limits<T>::quiet_NaN();
@@ -281,6 +286,11 @@ T WABT_VECTORCALL FloatMax(T lhs, T rhs) {
   } else {
     return std::max(lhs, rhs);
   }
+}
+
+template <typename T>
+T WABT_VECTORCALL FloatPMax(T lhs, T rhs) {
+  return std::max(lhs, rhs);
 }
 
 template <typename R, typename T> bool WABT_VECTORCALL CanConvert(T val) { return true; }
@@ -382,6 +392,16 @@ T WABT_VECTORCALL IntAddSat(T lhs, T rhs) {
 template <typename T, typename U = typename SatPromote<T>::type>
 T WABT_VECTORCALL IntSubSat(T lhs, T rhs) {
   return Saturate<T, U>(lhs - rhs);
+}
+
+template <typename T>
+T WABT_VECTORCALL SaturatingRoundingQMul(T lhs, T rhs) {
+  constexpr int size_in_bits = sizeof(T) * 8;
+  int round_const = 1 << (size_in_bits - 2);
+  int64_t product = lhs * rhs;
+  product += round_const;
+  product >>= (size_in_bits - 1);
+  return Saturate<T, int64_t>(product);
 }
 
 }  // namespace interp

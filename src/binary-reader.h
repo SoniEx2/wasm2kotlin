@@ -131,11 +131,11 @@ class BinaryReaderDelegate {
                                 Index global_index,
                                 Type type,
                                 bool mutable_) = 0;
-  virtual Result OnImportEvent(Index import_index,
-                               string_view module_name,
-                               string_view field_name,
-                               Index event_index,
-                               Index sig_index) = 0;
+  virtual Result OnImportTag(Index import_index,
+                             string_view module_name,
+                             string_view field_name,
+                             Index tag_index,
+                             Index sig_index) = 0;
   virtual Result EndImportSection() = 0;
 
   /* Function section */
@@ -196,6 +196,9 @@ class BinaryReaderDelegate {
   virtual Result OnOpcodeIndex(Index value) = 0;
   virtual Result OnOpcodeIndexIndex(Index value, Index value2) = 0;
   virtual Result OnOpcodeUint32Uint32(uint32_t value, uint32_t value2) = 0;
+  virtual Result OnOpcodeUint32Uint32Uint32(uint32_t value,
+                                            uint32_t value2,
+                                            uint32_t value3) = 0;
   virtual Result OnOpcodeUint64(uint64_t value) = 0;
   virtual Result OnOpcodeF32(uint32_t value) = 0;
   virtual Result OnOpcodeF64(uint64_t value) = 0;
@@ -225,15 +228,16 @@ class BinaryReaderDelegate {
   virtual Result OnBlockExpr(Type sig_type) = 0;
   virtual Result OnBrExpr(Index depth) = 0;
   virtual Result OnBrIfExpr(Index depth) = 0;
-  virtual Result OnBrOnExnExpr(Index depth, Index event_index) = 0;
   virtual Result OnBrTableExpr(Index num_targets,
                                Index* target_depths,
                                Index default_target_depth) = 0;
   virtual Result OnCallExpr(Index func_index) = 0;
   virtual Result OnCallIndirectExpr(Index sig_index, Index table_index) = 0;
-  virtual Result OnCatchExpr() = 0;
+  virtual Result OnCatchExpr(Index tag_index) = 0;
+  virtual Result OnCatchAllExpr() = 0;
   virtual Result OnCompareExpr(Opcode opcode) = 0;
   virtual Result OnConvertExpr(Opcode opcode) = 0;
+  virtual Result OnDelegateExpr(Index depth) = 0;
   virtual Result OnDropExpr() = 0;
   virtual Result OnElseExpr() = 0;
   virtual Result OnEndExpr() = 0;
@@ -271,31 +275,43 @@ class BinaryReaderDelegate {
   virtual Result OnRefNullExpr(Type type) = 0;
   virtual Result OnRefIsNullExpr() = 0;
   virtual Result OnNopExpr() = 0;
-  virtual Result OnRethrowExpr() = 0;
+  virtual Result OnRethrowExpr(Index depth) = 0;
   virtual Result OnReturnExpr() = 0;
   virtual Result OnReturnCallExpr(Index func_index) = 0;
   virtual Result OnReturnCallIndirectExpr(Index sig_index,
                                           Index table_index) = 0;
-  virtual Result OnSelectExpr(Type result_type) = 0;
+  virtual Result OnSelectExpr(Index result_count, Type* result_types) = 0;
   virtual Result OnStoreExpr(Opcode opcode,
                              Address alignment_log2,
                              Address offset) = 0;
-  virtual Result OnThrowExpr(Index event_index) = 0;
+  virtual Result OnThrowExpr(Index tag_index) = 0;
   virtual Result OnTryExpr(Type sig_type) = 0;
 
   virtual Result OnUnaryExpr(Opcode opcode) = 0;
   virtual Result OnTernaryExpr(Opcode opcode) = 0;
   virtual Result OnUnreachableExpr() = 0;
+  virtual Result OnUnwindExpr() = 0;
   virtual Result EndFunctionBody(Index index) = 0;
   virtual Result EndCodeSection() = 0;
 
   /* Simd instructions with Lane Imm operand*/
   virtual Result OnSimdLaneOpExpr(Opcode opcode, uint64_t value) = 0;
   virtual Result OnSimdShuffleOpExpr(Opcode opcode, v128 value) = 0;
+  virtual Result OnSimdLoadLaneExpr(Opcode opcode,
+                                    Address alignment_log2,
+                                    Address offset,
+                                    uint64_t value) = 0;
+  virtual Result OnSimdStoreLaneExpr(Opcode opcode,
+                                     Address alignment_log2,
+                                     Address offset,
+                                     uint64_t value) = 0;
 
   virtual Result OnLoadSplatExpr(Opcode opcode,
                                  Address alignment_log2,
                                  Address offset) = 0;
+  virtual Result OnLoadZeroExpr(Opcode opcode,
+                                Address alignment_log2,
+                                Address offset) = 0;
 
   /* Elem section */
   virtual Result BeginElemSection(Offset size) = 0;
@@ -404,10 +420,10 @@ class BinaryReaderDelegate {
   virtual Result OnSectionSymbol(Index index,
                                  uint32_t flags,
                                  Index section_index) = 0;
-  virtual Result OnEventSymbol(Index index,
-                               uint32_t flags,
-                               string_view name,
-                               Index event_index) = 0;
+  virtual Result OnTagSymbol(Index index,
+                             uint32_t flags,
+                             string_view name,
+                             Index tag_index) = 0;
   virtual Result OnTableSymbol(Index index,
                                uint32_t flags,
                                string_view name,
@@ -426,11 +442,11 @@ class BinaryReaderDelegate {
   virtual Result OnComdatEntry(ComdatType kind, Index index) = 0;
   virtual Result EndLinkingSection() = 0;
 
-  /* Event section */
-  virtual Result BeginEventSection(Offset size) = 0;
-  virtual Result OnEventCount(Index count) = 0;
-  virtual Result OnEventType(Index index, Index sig_index) = 0;
-  virtual Result EndEventSection() = 0;
+  /* Tag section */
+  virtual Result BeginTagSection(Offset size) = 0;
+  virtual Result OnTagCount(Index count) = 0;
+  virtual Result OnTagType(Index index, Index sig_index) = 0;
+  virtual Result EndTagSection() = 0;
 
   /* InitExpr - used by elem, data and global sections; these functions are
    * only called between calls to Begin*InitExpr and End*InitExpr */

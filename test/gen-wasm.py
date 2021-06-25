@@ -64,7 +64,7 @@ NAMED_VALUES = {
     'CODE': 10,
     'DATA': 11,
     'DATACOUNT': 12,
-    'EVENT': 13,
+    'TAG': 13,
 
     # name subsection codes
     'NAME_MODULE': 0,
@@ -265,6 +265,10 @@ NAMED_VALUES = {
     "table.init": (0xfc, 0x0c),
     "elem.drop": (0xfc, 0x0d),
     "table.copy": (0xfc, 0x0e),
+
+    # exceptions
+    "try": 0x06,
+    "catch_all": 0x19,
 }
 
 keywords = {

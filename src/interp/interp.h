@@ -70,7 +70,7 @@ bool TypesMatch(ValueType expected, ValueType actual);
 
 using ExternKind = ExternalKind;
 enum class Mutability { Const, Var };
-enum class EventAttr { Exception };
+enum class TagAttr { Exception };
 using SegmentMode = SegmentKind;
 enum class ElemKind { RefNull, RefFunc };
 
@@ -83,7 +83,7 @@ enum class ObjectKind {
   Table,
   Memory,
   Global,
-  Event,
+  Tag,
   Module,
   Instance,
   Thread,
@@ -138,6 +138,19 @@ struct Simd {
   static const u8 lanes = L;
 
   T v[L];
+
+  inline T& operator[](u8 idx) {
+#if WABT_BIG_ENDIAN
+    idx = (~idx) & (L-1);
+#endif
+    return v[idx];
+  }
+  inline T operator[](u8 idx) const {
+#if WABT_BIG_ENDIAN
+    idx = (~idx) & (L-1);
+#endif
+    return v[idx];
+  }
 };
 using s8x16 = Simd<s8, 16>;
 using u8x16 = Simd<u8, 16>;
@@ -236,19 +249,19 @@ struct GlobalType : ExternType {
   Mutability mut;
 };
 
-struct EventType : ExternType {
-  static const ExternKind skind = ExternKind::Event;
+struct TagType : ExternType {
+  static const ExternKind skind = ExternKind::Tag;
   static bool classof(const ExternType* type);
 
-  explicit EventType(EventAttr, const ValueTypes&);
+  explicit TagType(TagAttr, const ValueTypes&);
 
   std::unique_ptr<ExternType> Clone() const override;
 
-  friend Result Match(const EventType& expected,
-                      const EventType& actual,
+  friend Result Match(const TagType& expected,
+                      const TagType& actual,
                       std::string* out_msg);
 
-  EventAttr attr;
+  TagAttr attr;
   ValueTypes signature;
 };
 
@@ -314,8 +327,8 @@ struct GlobalDesc {
   InitExpr init;
 };
 
-struct EventDesc {
-  EventType type;
+struct TagDesc {
+  TagType type;
 };
 
 struct ExportDesc {
@@ -354,7 +367,7 @@ struct ModuleDesc {
   std::vector<TableDesc> tables;
   std::vector<MemoryDesc> memories;
   std::vector<GlobalDesc> globals;
-  std::vector<EventDesc> events;
+  std::vector<TagDesc> tags;
   std::vector<ExportDesc> exports;
   std::vector<StartDesc> starts;
   std::vector<ElemDesc> elems;
@@ -881,26 +894,26 @@ class Global : public Extern {
   Value value_;
 };
 
-class Event : public Extern {
+class Tag : public Extern {
  public:
   static bool classof(const Object* obj);
-  static const ObjectKind skind = ObjectKind::Event;
-  static const char* GetTypeName() { return "Event"; }
-  using Ptr = RefPtr<Event>;
+  static const ObjectKind skind = ObjectKind::Tag;
+  static const char* GetTypeName() { return "Tag"; }
+  using Ptr = RefPtr<Tag>;
 
-  static Event::Ptr New(Store&, EventType);
+  static Tag::Ptr New(Store&, TagType);
 
   Result Match(Store&, const ImportType&, Trap::Ptr* out_trap) override;
 
   const ExternType& extern_type() override;
-  const EventType& type() const;
+  const TagType& type() const;
 
  private:
   friend Store;
-  explicit Event(Store&, EventType);
+  explicit Tag(Store&, TagType);
   void Mark(Store&) override;
 
-  EventType type_;
+  TagType type_;
 };
 
 class ElemSegment {
@@ -979,7 +992,7 @@ class Instance : public Object {
   const RefVec& tables() const;
   const RefVec& memories() const;
   const RefVec& globals() const;
-  const RefVec& events() const;
+  const RefVec& tags() const;
   const RefVec& exports() const;
   const std::vector<ElemSegment>& elems() const;
   std::vector<ElemSegment>& elems();
@@ -1001,7 +1014,7 @@ class Instance : public Object {
   RefVec tables_;
   RefVec memories_;
   RefVec globals_;
-  RefVec events_;
+  RefVec tags_;
   RefVec exports_;
   std::vector<ElemSegment> elems_;
   std::vector<DataSegment> datas_;
@@ -1065,6 +1078,7 @@ class Thread : public Object {
   template <typename T>
   T WABT_VECTORCALL Pop();
   Value Pop();
+  u64 PopPtr(const Memory::Ptr& memory);
 
   template <typename T>
   void WABT_VECTORCALL Push(T);
@@ -1124,6 +1138,9 @@ class Thread : public Object {
 
   template <typename R, typename T>
   RunResult DoSimdUnop(UnopFunc<R, T>);
+  // Like DoSimdUnop but zeroes top half.
+  template <typename R, typename T>
+  RunResult DoSimdUnopZero(UnopFunc<R, T>);
   template <typename R, typename T>
   RunResult DoSimdBinop(BinopFunc<R, T>);
   RunResult DoSimdBitSelect();
@@ -1135,14 +1152,26 @@ class Thread : public Object {
   RunResult DoSimdShift(BinopFunc<R, T>);
   template <typename S, typename T>
   RunResult DoSimdLoadSplat(Instr, Trap::Ptr* out_trap);
+  template <typename S>
+  RunResult DoSimdLoadLane(Instr, Trap::Ptr* out_trap);
+  template <typename S>
+  RunResult DoSimdStoreLane(Instr, Trap::Ptr* out_trap);
+  template <typename S, typename T>
+  RunResult DoSimdLoadZero(Instr, Trap::Ptr* out_trap);
   RunResult DoSimdSwizzle();
   RunResult DoSimdShuffle(Instr);
   template <typename S, typename T>
   RunResult DoSimdNarrow();
   template <typename S, typename T, bool low>
-  RunResult DoSimdWiden();
+  RunResult DoSimdConvert();
+  template <typename S, typename T>
+  RunResult DoSimdDot();
   template <typename S, typename T>
   RunResult DoSimdLoadExtend(Instr, Trap::Ptr* out_trap);
+  template <typename S, typename T>
+  RunResult DoSimdExtaddPairwise();
+  template <typename S, typename T, bool low>
+  RunResult DoSimdExtmul();
 
   template <typename T, typename V = T>
   RunResult DoAtomicLoad(Instr, Trap::Ptr* out_trap);

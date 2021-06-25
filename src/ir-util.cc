@@ -120,9 +120,6 @@ ModuleContext::Arities ModuleContext::GetExprArity(const Expr& expr) const {
       return { arity + 1, arity };
     }
 
-    case ExprType::BrOnExn:
-      return { 1, 1 };
-
     case ExprType::BrTable:
       return { GetLabelArity(cast<BrTableExpr>(&expr)->default_target) + 1, 1,
                true };
@@ -183,6 +180,7 @@ ModuleContext::Arities ModuleContext::GetExprArity(const Expr& expr) const {
     case ExprType::TableGet:
     case ExprType::RefIsNull:
     case ExprType::LoadSplat:
+    case ExprType::LoadZero:
       return { 1, 1 };
 
     case ExprType::Drop:
@@ -215,8 +213,8 @@ ModuleContext::Arities ModuleContext::GetExprArity(const Expr& expr) const {
     case ExprType::Throw: {
       auto throw_ = cast<ThrowExpr>(&expr);
       Index operand_count = 0;
-      if (Event* event = module.GetEvent(throw_->var)) {
-        operand_count = event->decl.sig.param_types.size();
+      if (Tag* tag = module.GetTag(throw_->var)) {
+        operand_count = tag->decl.sig.param_types.size();
       }
       return { operand_count, 0, true };
     }
@@ -254,6 +252,11 @@ ModuleContext::Arities ModuleContext::GetExprArity(const Expr& expr) const {
           assert(0);
           return { 0, 0 };
       }
+    }
+
+    case ExprType::SimdLoadLane:
+    case ExprType::SimdStoreLane: {
+      return { 2, 1 };
     }
 
     case ExprType::SimdShuffleOp:

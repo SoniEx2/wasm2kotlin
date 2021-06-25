@@ -79,6 +79,7 @@ Clone as normal, but don't forget to get the submodules as well:
 ```console
 $ git clone --recursive https://github.com/WebAssembly/wabt
 $ cd wabt
+$ git submodule update --init
 ```
 
 This will fetch the testsuite and gtest repos, which are needed for some tests.
@@ -94,21 +95,24 @@ $ cmake ..
 $ cmake --build .
 ```
 
-This will produce build files using CMake's default build generator. Read the CMake
-documentation for more information.
+This will produce build files using CMake's default build generator. Read the
+CMake documentation for more information.
 
-**NOTE**: You must create a separate directory for the build artifacts (e.g. `build` above).
-Running `cmake` from the repo root directory will not work since the build produces an
-executable called `wasm2c` which conflicts with the `wasm2c` directory.
+**NOTE**: You must create a separate directory for the build artifacts (e.g.
+`build` above).  Running `cmake` from the repo root directory will not work
+since the build produces an executable called `wasm2c` which conflicts with the
+`wasm2c` directory.
 
 ## Building using the top-level `Makefile` (Linux and macOS)
 
-**NOTE**: Under the hood, this uses `make` to run CMake, which then calls `make` again.
-On some systems (typically macOS), this doesn't build properly. If you see these errors,
-you can build using CMake directly as described above.
+**NOTE**: Under the hood, this uses `make` to run CMake, which then calls
+`ninja` to perform that actual build.  On some systems (typically macOS), this
+doesn't build properly. If you see these errors, you can build using CMake
+directly as described above.
 
-You'll need [CMake](https://cmake.org). If you just run `make`, it will run CMake for you,
-and put the result in `bin/clang/Debug/` by default:
+You'll need [CMake](https://cmake.org) and [Ninja](https://ninja-build.org). If
+you just run `make`, it will run CMake for you, and put the result in
+`out/clang/Debug/` by default:
 
 > Note: If you are on macOS, you will need to use CMake version 3.2 or higher
 
@@ -321,20 +325,11 @@ $ make test-clang-release-asan
 ...
 ```
 
-The Travis bots run all of these tests (and more). Before you land a change,
+The GitHub actions bots run all of these tests (and more). Before you land a change,
 you should run them too. One easy way is to use the `test-everything` target:
 
 ```console
 $ make test-everything
-```
-
-To run everything the Travis bots do, you can use the following scripts:
-
-```console
-$ CC=gcc scripts/travis-build.sh
-$ CC=gcc scripts/travis-test.sh
-$ CC=clang scripts/travis-build.sh
-$ CC=clang scripts/travis-test.sh
 ```
 
 ## Fuzzing

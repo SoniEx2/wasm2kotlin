@@ -39,7 +39,6 @@ class NameApplier : public ExprVisitor::DelegateNop {
   Result EndBlockExpr(BlockExpr*) override;
   Result OnBrExpr(BrExpr*) override;
   Result OnBrIfExpr(BrIfExpr*) override;
-  Result OnBrOnExnExpr(BrOnExnExpr*) override;
   Result OnBrTableExpr(BrTableExpr*) override;
   Result OnCallExpr(CallExpr*) override;
   Result OnRefFuncExpr(RefFuncExpr*) override;
@@ -67,7 +66,10 @@ class NameApplier : public ExprVisitor::DelegateNop {
   Result OnTableFillExpr(TableFillExpr*) override;
   Result BeginTryExpr(TryExpr*) override;
   Result EndTryExpr(TryExpr*) override;
+  Result OnCatchExpr(TryExpr*, Catch*) override;
+  Result OnDelegateExpr(TryExpr*) override;
   Result OnThrowExpr(ThrowExpr*) override;
+  Result OnRethrowExpr(RethrowExpr*) override;
 
  private:
   void PushLabel(const std::string& label);
@@ -79,13 +81,13 @@ class NameApplier : public ExprVisitor::DelegateNop {
   Result UseNameForGlobalVar(Var* var);
   Result UseNameForTableVar(Var* var);
   Result UseNameForMemoryVar(Var* var);
-  Result UseNameForEventVar(Var* var);
+  Result UseNameForTagVar(Var* var);
   Result UseNameForDataSegmentVar(Var* var);
   Result UseNameForElemSegmentVar(Var* var);
   Result UseNameForParamAndLocalVar(Func* func, Var* var);
   Result VisitFunc(Index func_index, Func* func);
   Result VisitGlobal(Global* global);
-  Result VisitEvent(Event* event);
+  Result VisitTag(Tag* tag);
   Result VisitExport(Index export_index, Export* export_);
   Result VisitElemSegment(Index elem_segment_index, ElemSegment* segment);
   Result VisitDataSegment(Index data_segment_index, DataSegment* segment);
@@ -181,12 +183,12 @@ Result NameApplier::UseNameForMemoryVar(Var* var) {
   return Result::Ok;
 }
 
-Result NameApplier::UseNameForEventVar(Var* var) {
-  Event* event = module_->GetEvent(*var);
-  if (!event) {
+Result NameApplier::UseNameForTagVar(Var* var) {
+  Tag* tag = module_->GetTag(*var);
+  if (!tag) {
     return Result::Error;
   }
-  UseNameForVar(event->name, var);
+  UseNameForVar(tag->name, var);
   return Result::Ok;
 }
 
@@ -310,13 +312,6 @@ Result NameApplier::OnBrIfExpr(BrIfExpr* expr) {
   return Result::Ok;
 }
 
-Result NameApplier::OnBrOnExnExpr(BrOnExnExpr* expr) {
-  string_view label = FindLabelByVar(&expr->label_var);
-  UseNameForVar(label, &expr->label_var);
-  CHECK_RESULT(UseNameForEventVar(&expr->event_var));
-  return Result::Ok;
-}
-
 Result NameApplier::OnBrTableExpr(BrTableExpr* expr) {
   for (Var& target : expr->targets) {
     string_view label = FindLabelByVar(&target);
@@ -338,8 +333,27 @@ Result NameApplier::EndTryExpr(TryExpr*) {
   return Result::Ok;
 }
 
+Result NameApplier::OnCatchExpr(TryExpr*, Catch* expr) {
+  if (!expr->IsCatchAll()) {
+    CHECK_RESULT(UseNameForTagVar(&expr->var));
+  }
+  return Result::Ok;
+}
+
+Result NameApplier::OnDelegateExpr(TryExpr* expr) {
+  string_view label = FindLabelByVar(&expr->delegate_target);
+  UseNameForVar(label, &expr->delegate_target);
+  return Result::Ok;
+}
+
 Result NameApplier::OnThrowExpr(ThrowExpr* expr) {
-  CHECK_RESULT(UseNameForEventVar(&expr->var));
+  CHECK_RESULT(UseNameForTagVar(&expr->var));
+  return Result::Ok;
+}
+
+Result NameApplier::OnRethrowExpr(RethrowExpr* expr) {
+  string_view label = FindLabelByVar(&expr->var);
+  UseNameForVar(label, &expr->var);
   return Result::Ok;
 }
 
@@ -428,9 +442,9 @@ Result NameApplier::VisitGlobal(Global* global) {
   return Result::Ok;
 }
 
-Result NameApplier::VisitEvent(Event* event) {
-  if (event->decl.has_func_type) {
-    CHECK_RESULT(UseNameForFuncTypeVar(&event->decl.type_var));
+Result NameApplier::VisitTag(Tag* tag) {
+  if (tag->decl.has_func_type) {
+    CHECK_RESULT(UseNameForFuncTypeVar(&tag->decl.type_var));
   }
   return Result::Ok;
 }
@@ -472,8 +486,8 @@ Result NameApplier::VisitModule(Module* module) {
     CHECK_RESULT(VisitFunc(i, module->funcs[i]));
   for (size_t i = 0; i < module->globals.size(); ++i)
     CHECK_RESULT(VisitGlobal(module->globals[i]));
-  for (size_t i = 0; i < module->events.size(); ++i)
-    CHECK_RESULT(VisitEvent(module->events[i]));
+  for (size_t i = 0; i < module->tags.size(); ++i)
+    CHECK_RESULT(VisitTag(module->tags[i]));
   for (size_t i = 0; i < module->exports.size(); ++i)
     CHECK_RESULT(VisitExport(i, module->exports[i]));
   for (size_t i = 0; i < module->elem_segments.size(); ++i)

@@ -146,7 +146,7 @@ class WatWriter : ModuleContext {
   void WriteFunc(const Func& func);
   void WriteBeginGlobal(const Global& global);
   void WriteGlobal(const Global& global);
-  void WriteEvent(const Event& event);
+  void WriteTag(const Tag& tag);
   void WriteLimits(const Limits& limits);
   void WriteTable(const Table& table);
   void WriteElemSegment(const ElemSegment& segment);
@@ -188,7 +188,7 @@ class WatWriter : ModuleContext {
   Index table_index_ = 0;
   Index memory_index_ = 0;
   Index type_index_ = 0;
-  Index event_index_ = 0;
+  Index tag_index_ = 0;
   Index data_segment_index_ = 0;
   Index elem_segment_index_ = 0;
 };
@@ -513,7 +513,6 @@ class WatWriter::ExprVisitorDelegate : public ExprVisitor::Delegate {
   Result EndBlockExpr(BlockExpr*) override;
   Result OnBrExpr(BrExpr*) override;
   Result OnBrIfExpr(BrIfExpr*) override;
-  Result OnBrOnExnExpr(BrOnExnExpr*) override;
   Result OnBrTableExpr(BrTableExpr*) override;
   Result OnCallExpr(CallExpr*) override;
   Result OnCallIndirectExpr(CallIndirectExpr*) override;
@@ -558,7 +557,9 @@ class WatWriter::ExprVisitorDelegate : public ExprVisitor::Delegate {
   Result OnUnaryExpr(UnaryExpr*) override;
   Result OnUnreachableExpr(UnreachableExpr*) override;
   Result BeginTryExpr(TryExpr*) override;
-  Result OnCatchExpr(TryExpr*) override;
+  Result OnCatchExpr(TryExpr*, Catch*) override;
+  Result OnUnwindExpr(TryExpr*) override;
+  Result OnDelegateExpr(TryExpr*) override;
   Result EndTryExpr(TryExpr*) override;
   Result OnThrowExpr(ThrowExpr*) override;
   Result OnRethrowExpr(RethrowExpr*) override;
@@ -571,8 +572,11 @@ class WatWriter::ExprVisitorDelegate : public ExprVisitor::Delegate {
   Result OnAtomicRmwCmpxchgExpr(AtomicRmwCmpxchgExpr*) override;
   Result OnTernaryExpr(TernaryExpr*) override;
   Result OnSimdLaneOpExpr(SimdLaneOpExpr*) override;
+  Result OnSimdLoadLaneExpr(SimdLoadLaneExpr*) override;
+  Result OnSimdStoreLaneExpr(SimdStoreLaneExpr*) override;
   Result OnSimdShuffleOpExpr(SimdShuffleOpExpr*) override;
   Result OnLoadSplatExpr(LoadSplatExpr*) override;
+  Result OnLoadZeroExpr(LoadZeroExpr*) override;
 
  private:
   WatWriter* writer_;
@@ -603,13 +607,6 @@ Result WatWriter::ExprVisitorDelegate::OnBrExpr(BrExpr* expr) {
 Result WatWriter::ExprVisitorDelegate::OnBrIfExpr(BrIfExpr* expr) {
   writer_->WritePutsSpace(Opcode::BrIf_Opcode.GetName());
   writer_->WriteBrVar(expr->var, NextChar::Newline);
-  return Result::Ok;
-}
-
-Result WatWriter::ExprVisitorDelegate::OnBrOnExnExpr(BrOnExnExpr* expr) {
-  writer_->WritePutsSpace(Opcode::BrOnExn_Opcode.GetName());
-  writer_->WriteBrVar(expr->label_var, NextChar::Space);
-  writer_->WriteVar(expr->event_var, NextChar::Newline);
   return Result::Ok;
 }
 
@@ -883,12 +880,32 @@ Result WatWriter::ExprVisitorDelegate::BeginTryExpr(TryExpr* expr) {
   return Result::Ok;
 }
 
-Result WatWriter::ExprVisitorDelegate::OnCatchExpr(TryExpr* expr) {
+Result WatWriter::ExprVisitorDelegate::OnCatchExpr(
+    TryExpr* expr, Catch* catch_) {
   writer_->Dedent();
-  writer_->WritePutsSpace(Opcode::Catch_Opcode.GetName());
+  if (catch_->IsCatchAll()) {
+    writer_->WritePutsNewline(Opcode::CatchAll_Opcode.GetName());
+  } else {
+    writer_->WritePutsSpace(Opcode::Catch_Opcode.GetName());
+    writer_->WriteVar(catch_->var, NextChar::Newline);
+  }
   writer_->Indent();
   writer_->SetTopLabelType(LabelType::Catch);
-  writer_->WriteNewline(FORCE_NEWLINE);
+  return Result::Ok;
+}
+
+Result WatWriter::ExprVisitorDelegate::OnUnwindExpr(TryExpr* expr) {
+  writer_->Dedent();
+  writer_->WritePutsNewline(Opcode::Unwind_Opcode.GetName());
+  writer_->Indent();
+  writer_->SetTopLabelType(LabelType::Unwind);
+  return Result::Ok;
+}
+
+Result WatWriter::ExprVisitorDelegate::OnDelegateExpr(TryExpr* expr) {
+  writer_->Dedent();
+  writer_->WritePutsSpace(Opcode::Delegate_Opcode.GetName());
+  writer_->WriteVar(expr->delegate_target, NextChar::Newline);
   return Result::Ok;
 }
 
@@ -904,7 +921,8 @@ Result WatWriter::ExprVisitorDelegate::OnThrowExpr(ThrowExpr* expr) {
 }
 
 Result WatWriter::ExprVisitorDelegate::OnRethrowExpr(RethrowExpr* expr) {
-  writer_->WritePutsNewline(Opcode::Rethrow_Opcode.GetName());
+  writer_->WritePutsSpace(Opcode::Rethrow_Opcode.GetName());
+  writer_->WriteBrVar(expr->var, NextChar::Newline);
   return Result::Ok;
 }
 
@@ -960,12 +978,43 @@ Result WatWriter::ExprVisitorDelegate::OnSimdLaneOpExpr(SimdLaneOpExpr* expr) {
   return Result::Ok;
 }
 
+Result WatWriter::ExprVisitorDelegate::OnSimdLoadLaneExpr(SimdLoadLaneExpr* expr) {
+  writer_->WritePutsSpace(expr->opcode.GetName());
+  if (expr->offset) {
+    writer_->Writef("offset=%" PRIaddress, expr->offset);
+  }
+  if (!expr->opcode.IsNaturallyAligned(expr->align)) {
+    writer_->Writef("align=%" PRIaddress, expr->align);
+  }
+  writer_->Writef("%" PRIu64, (expr->val));
+  writer_->WriteNewline(NO_FORCE_NEWLINE);
+  return Result::Ok;
+}
+
+Result WatWriter::ExprVisitorDelegate::OnSimdStoreLaneExpr(
+    SimdStoreLaneExpr* expr) {
+  writer_->WritePutsSpace(expr->opcode.GetName());
+  if (expr->offset) {
+    writer_->Writef("offset=%" PRIaddress, expr->offset);
+  }
+  if (!expr->opcode.IsNaturallyAligned(expr->align)) {
+    writer_->Writef("align=%" PRIaddress, expr->align);
+  }
+  writer_->Writef("%" PRIu64, (expr->val));
+  writer_->WriteNewline(NO_FORCE_NEWLINE);
+  return Result::Ok;
+}
+
 Result WatWriter::ExprVisitorDelegate::OnSimdShuffleOpExpr(
     SimdShuffleOpExpr* expr) {
   writer_->WritePutsSpace(expr->opcode.GetName());
   std::array<uint8_t, 16> values = Bitcast<std::array<uint8_t, 16>>(expr->val);
   for (int32_t lane = 0; lane < 16; ++lane) {
+#if WABT_BIG_ENDIAN
+    writer_->Writef("%u", values[15 - lane]);
+#else
     writer_->Writef("%u", values[lane]);
+#endif
   }
   writer_->WriteNewline(NO_FORCE_NEWLINE);
   return Result::Ok;
@@ -973,6 +1022,11 @@ Result WatWriter::ExprVisitorDelegate::OnSimdShuffleOpExpr(
 
 Result WatWriter::ExprVisitorDelegate::OnLoadSplatExpr(LoadSplatExpr* expr) {
   writer_->WriteLoadStoreExpr<LoadSplatExpr>(expr);
+  return Result::Ok;
+}
+
+Result WatWriter::ExprVisitorDelegate::OnLoadZeroExpr(LoadZeroExpr* expr) {
+  writer_->WriteLoadStoreExpr<LoadZeroExpr>(expr);
   return Result::Ok;
 }
 
@@ -1059,6 +1113,7 @@ void WatWriter::FlushExprTree(const ExprTree& expr_tree) {
       WriteFoldedExprList(cast<BlockExpr>(expr_tree.expr)->block.exprs);
       FlushExprTreeStack();
       WriteCloseNewline();
+      EndBlock();
       break;
 
     case ExprType::Loop:
@@ -1068,6 +1123,7 @@ void WatWriter::FlushExprTree(const ExprTree& expr_tree) {
       WriteFoldedExprList(cast<LoopExpr>(expr_tree.expr)->block.exprs);
       FlushExprTreeStack();
       WriteCloseNewline();
+      EndBlock();
       break;
 
     case ExprType::If: {
@@ -1087,6 +1143,7 @@ void WatWriter::FlushExprTree(const ExprTree& expr_tree) {
         WriteCloseNewline();
       }
       WriteCloseNewline();
+      EndBlock();
       break;
     }
 
@@ -1100,11 +1157,42 @@ void WatWriter::FlushExprTree(const ExprTree& expr_tree) {
       WriteFoldedExprList(try_expr->block.exprs);
       FlushExprTreeStack();
       WriteCloseNewline();
-      WriteOpenNewline("catch");
-      WriteFoldedExprList(try_expr->catch_);
-      FlushExprTreeStack();
+      switch (try_expr->kind) {
+        case TryKind::Catch:
+          for (const Catch& catch_ : try_expr->catches) {
+            WritePuts("(", NextChar::None);
+            if (catch_.IsCatchAll()) {
+              WritePutsNewline("catch_all");
+            } else {
+              WritePutsSpace(Opcode::Catch_Opcode.GetName());
+              WriteVar(catch_.var, NextChar::Newline);
+            }
+            Indent();
+            WriteFoldedExprList(catch_.exprs);
+            FlushExprTreeStack();
+            WriteCloseNewline();
+          }
+          break;
+        case TryKind::Unwind:
+          WritePuts("(", NextChar::None);
+          WritePutsNewline(Opcode::Unwind_Opcode.GetName());
+          Indent();
+          WriteFoldedExprList(try_expr->unwind);
+          FlushExprTreeStack();
+          WriteCloseNewline();
+          break;
+        case TryKind::Delegate:
+          WritePuts("(", NextChar::None);
+          WritePutsSpace(Opcode::Delegate_Opcode.GetName());
+          WriteVar(try_expr->delegate_target, NextChar::None);
+          WritePuts(")", NextChar::Newline);
+          break;
+        case TryKind::Invalid:
+          // Should not occur.
+          break;
+      }
       WriteCloseNewline();
-      WriteCloseNewline();
+      EndBlock();
       break;
     }
 
@@ -1251,31 +1339,31 @@ void WatWriter::WriteGlobal(const Global& global) {
   WriteCloseNewline();
 }
 
-void WatWriter::WriteEvent(const Event& event) {
-  WriteOpenSpace("event");
-  WriteNameOrIndex(event.name, event_index_, NextChar::Space);
-  WriteInlineExports(ExternalKind::Event, event_index_);
-  WriteInlineImport(ExternalKind::Event, event_index_);
-  if (event.decl.has_func_type) {
+void WatWriter::WriteTag(const Tag& tag) {
+  WriteOpenSpace("tag");
+  WriteNameOrIndex(tag.name, tag_index_, NextChar::Space);
+  WriteInlineExports(ExternalKind::Tag, tag_index_);
+  WriteInlineImport(ExternalKind::Tag, tag_index_);
+  if (tag.decl.has_func_type) {
     WriteOpenSpace("type");
-    WriteVar(event.decl.type_var, NextChar::None);
+    WriteVar(tag.decl.type_var, NextChar::None);
     WriteCloseSpace();
   }
-  WriteTypes(event.decl.sig.param_types, "param");
-  ++event_index_;
+  WriteTypes(tag.decl.sig.param_types, "param");
+  ++tag_index_;
   WriteCloseNewline();
 }
 
 void WatWriter::WriteLimits(const Limits& limits) {
+  if (limits.is_64) {
+    Writef("i64");
+  }
   Writef("%" PRIu64, limits.initial);
   if (limits.has_max) {
     Writef("%" PRIu64, limits.max);
   }
   if (limits.is_shared) {
     Writef("shared");
-  }
-  if (limits.is_64) {
-    Writef("i64");
   }
 }
 
@@ -1384,8 +1472,8 @@ void WatWriter::WriteImport(const Import& import) {
       WriteCloseSpace();
       break;
 
-    case ExternalKind::Event:
-      WriteEvent(cast<EventImport>(&import)->event);
+    case ExternalKind::Tag:
+      WriteTag(cast<TagImport>(&import)->tag);
       break;
   }
 
@@ -1480,8 +1568,8 @@ Result WatWriter::WriteModule() {
       case ModuleFieldType::Import:
         WriteImport(*cast<ImportModuleField>(&field)->import);
         break;
-      case ModuleFieldType::Event:
-        WriteEvent(cast<EventModuleField>(&field)->event);
+      case ModuleFieldType::Tag:
+        WriteTag(cast<TagModuleField>(&field)->tag);
         break;
       case ModuleFieldType::Export:
         WriteExport(cast<ExportModuleField>(&field)->export_);
@@ -1550,8 +1638,8 @@ void WatWriter::BuildInlineExportMap() {
         index = module.GetGlobalIndex(export_->var);
         break;
 
-      case ExternalKind::Event:
-        index = module.GetEventIndex(export_->var);
+      case ExternalKind::Tag:
+        index = module.GetTagIndex(export_->var);
         break;
     }
 
@@ -1595,8 +1683,8 @@ bool WatWriter::IsInlineExport(const Export& export_) {
       index = module.GetGlobalIndex(export_.var);
       break;
 
-    case ExternalKind::Event:
-      index = module.GetEventIndex(export_.var);
+    case ExternalKind::Tag:
+      index = module.GetTagIndex(export_.var);
       break;
   }
 

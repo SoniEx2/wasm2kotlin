@@ -90,7 +90,6 @@ class Validator : public ExprVisitor::Delegate {
   Result EndBlockExpr(BlockExpr*) override;
   Result OnBrExpr(BrExpr*) override;
   Result OnBrIfExpr(BrIfExpr*) override;
-  Result OnBrOnExnExpr(BrOnExnExpr*) override;
   Result OnBrTableExpr(BrTableExpr*) override;
   Result OnCallExpr(CallExpr*) override;
   Result OnCallIndirectExpr(CallIndirectExpr*) override;
@@ -135,7 +134,9 @@ class Validator : public ExprVisitor::Delegate {
   Result OnUnaryExpr(UnaryExpr*) override;
   Result OnUnreachableExpr(UnreachableExpr*) override;
   Result BeginTryExpr(TryExpr*) override;
-  Result OnCatchExpr(TryExpr*) override;
+  Result OnCatchExpr(TryExpr*, Catch*) override;
+  Result OnUnwindExpr(TryExpr*) override;
+  Result OnDelegateExpr(TryExpr*) override;
   Result EndTryExpr(TryExpr*) override;
   Result OnThrowExpr(ThrowExpr*) override;
   Result OnRethrowExpr(RethrowExpr*) override;
@@ -148,8 +149,11 @@ class Validator : public ExprVisitor::Delegate {
   Result OnAtomicRmwCmpxchgExpr(AtomicRmwCmpxchgExpr*) override;
   Result OnTernaryExpr(TernaryExpr*) override;
   Result OnSimdLaneOpExpr(SimdLaneOpExpr*) override;
+  Result OnSimdLoadLaneExpr(SimdLoadLaneExpr*) override;
+  Result OnSimdStoreLaneExpr(SimdStoreLaneExpr*) override;
   Result OnSimdShuffleOpExpr(SimdShuffleOpExpr*) override;
   Result OnLoadSplatExpr(LoadSplatExpr*) override;
+  Result OnLoadZeroExpr(LoadZeroExpr*) override;
 
  private:
   Type GetDeclarationType(const FuncDeclaration&);
@@ -246,12 +250,6 @@ Result Validator::OnBrExpr(BrExpr* expr) {
 
 Result Validator::OnBrIfExpr(BrIfExpr* expr) {
   result_ |= validator_.OnBrIf(expr->loc, expr->var);
-  return Result::Ok;
-}
-
-Result Validator::OnBrOnExnExpr(BrOnExnExpr* expr) {
-  result_ |= validator_.OnBrOnExn(expr->loc, expr->label_var,
-                                  expr->event_var);
   return Result::Ok;
 }
 
@@ -464,13 +462,8 @@ Result Validator::OnReturnCallIndirectExpr(ReturnCallIndirectExpr* expr) {
 }
 
 Result Validator::OnSelectExpr(SelectExpr* expr) {
-  Type result_type;
-  if (expr->result_type.empty()) {
-    result_type = Type::Void;
-  } else {
-    result_type = expr->result_type[0];
-  }
-  result_ |= validator_.OnSelect(expr->loc, result_type);
+  result_ |= validator_.OnSelect(expr->loc, expr->result_type.size(),
+                                 expr->result_type.data());
   // TODO: Existing behavior fails when select fails.
 #if 0
   return Result::Ok;
@@ -500,8 +493,19 @@ Result Validator::BeginTryExpr(TryExpr* expr) {
   return Result::Ok;
 }
 
-Result Validator::OnCatchExpr(TryExpr* expr) {
-  result_ |= validator_.OnCatch(expr->loc);
+Result Validator::OnCatchExpr(TryExpr*, Catch* catch_) {
+  result_ |= validator_.OnCatch(catch_->loc, catch_->var,
+                                catch_->IsCatchAll());
+  return Result::Ok;
+}
+
+Result Validator::OnUnwindExpr(TryExpr* expr) {
+  result_ |= validator_.OnUnwind(expr->loc);
+  return Result::Ok;
+}
+
+Result Validator::OnDelegateExpr(TryExpr* expr) {
+  result_ |= validator_.OnDelegate(expr->loc, expr->delegate_target);
   return Result::Ok;
 }
 
@@ -516,7 +520,7 @@ Result Validator::OnThrowExpr(ThrowExpr* expr) {
 }
 
 Result Validator::OnRethrowExpr(RethrowExpr* expr) {
-  result_ |= validator_.OnRethrow(expr->loc);
+  result_ |= validator_.OnRethrow(expr->loc, expr->var);
   return Result::Ok;
 }
 
@@ -571,6 +575,20 @@ Result Validator::OnSimdLaneOpExpr(SimdLaneOpExpr* expr) {
   return Result::Ok;
 }
 
+Result Validator::OnSimdLoadLaneExpr(SimdLoadLaneExpr* expr) {
+  result_ |= validator_.OnSimdLoadLane(
+      expr->loc, expr->opcode, expr->opcode.GetAlignment(expr->align),
+      expr->val);
+  return Result::Ok;
+}
+
+Result Validator::OnSimdStoreLaneExpr(SimdStoreLaneExpr* expr) {
+  result_ |= validator_.OnSimdStoreLane(expr->loc, expr->opcode,
+                                        expr->opcode.GetAlignment(expr->align),
+                                        expr->val);
+  return Result::Ok;
+}
+
 Result Validator::OnSimdShuffleOpExpr(SimdShuffleOpExpr* expr) {
   result_ |= validator_.OnSimdShuffleOp(expr->loc, expr->opcode, expr->val);
   return Result::Ok;
@@ -579,6 +597,12 @@ Result Validator::OnSimdShuffleOpExpr(SimdShuffleOpExpr* expr) {
 Result Validator::OnLoadSplatExpr(LoadSplatExpr* expr) {
   result_ |= validator_.OnLoadSplat(expr->loc, expr->opcode,
                                     expr->opcode.GetAlignment(expr->align));
+  return Result::Ok;
+}
+
+Result Validator::OnLoadZeroExpr(LoadZeroExpr* expr) {
+  result_ |= validator_.OnLoadZero(expr->loc, expr->opcode,
+                                   expr->opcode.GetAlignment(expr->align));
   return Result::Ok;
 }
 
@@ -660,10 +684,10 @@ Result Validator::CheckModule() {
           break;
         }
 
-        case ExternalKind::Event: {
-          auto&& event = cast<EventImport>(f->import.get())->event;
-          result_ |= validator_.OnEvent(
-              field.loc, GetFuncTypeIndex(field.loc, event.decl));
+        case ExternalKind::Tag: {
+          auto&& tag = cast<TagImport>(f->import.get())->tag;
+          result_ |= validator_.OnTag(field.loc,
+                                      GetFuncTypeIndex(field.loc, tag.decl));
           break;
         }
       }
@@ -734,11 +758,11 @@ Result Validator::CheckModule() {
     }
   }
 
-  // Event section.
+  // Tag section.
   for (const ModuleField& field : module->fields) {
-    if (auto* f = dyn_cast<EventModuleField>(&field)) {
-      result_ |= validator_.OnEvent(field.loc,
-                                    GetFuncTypeIndex(field.loc, f->event.decl));
+    if (auto* f = dyn_cast<TagModuleField>(&field)) {
+      result_ |=
+          validator_.OnTag(field.loc, GetFuncTypeIndex(field.loc, f->tag.decl));
     }
   }
 

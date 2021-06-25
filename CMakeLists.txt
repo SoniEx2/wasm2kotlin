@@ -15,7 +15,8 @@
 #
 
 cmake_minimum_required(VERSION 3.0.0)
-project(WABT VERSION 1.0.13)
+project(WABT VERSION 1.0.23)
+include(GNUInstallDirs)
 
 if (POLICY CMP0077)
   cmake_policy(SET CMP0077 NEW)
@@ -51,6 +52,10 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/.git)
     set(CMAKE_PROJECT_VERSION "${CMAKE_PROJECT_VERSION} (${GIT_VERSION})")
   endif ()
 endif ()
+
+if (NOT "${CMAKE_PROJECT_VERSION}")
+  set(CMAKE_PROJECT_VERSION ${PROJECT_VERSION})
+endif()
 
 option(BUILD_TESTS "Build GTest-based tests" ON)
 option(USE_SYSTEM_GTEST "Use system GTest, instead of building" OFF)
@@ -134,8 +139,7 @@ else ()
   #   interfaces, etc.
   # disable -Wpointer-arith: this is a GCC extension, and doesn't work in MSVC.
   add_definitions(
-    -Wall -Wextra -Wno-unused-parameter -Wpointer-arith -g
-    -Wuninitialized
+    -Wall -Wextra -Wno-unused-parameter -Wpointer-arith -Wuninitialized
   )
 
   set(CMAKE_CXX_EXTENSIONS OFF)
@@ -187,6 +191,8 @@ else ()
           set(TARGET_ARCH "i386")
         elseif (${FILE_OUTPUT} MATCHES "ARM")
           set(TARGET_ARCH "ARM")
+        elseif (${FILE_OUTPUT} MATCHES "IBM S/390")
+          set(TARGET_ARCH "s390x")
         else ()
           message(WARNING "Unknown target architecture!")
         endif ()
@@ -200,6 +206,9 @@ else ()
     if (TARGET_ARCH STREQUAL "i386")
       # wasm doesn't allow for x87 floating point math
       add_definitions(-msse2 -mfpmath=sse)
+    endif ()
+    if (TARGET_ARCH STREQUAL "s390x")
+      add_definitions(-DWABT_BIG_ENDIAN=1)
     endif ()
   endif ()
 endif ()
@@ -230,7 +239,8 @@ if (USE_UBSAN)
     sanitizer(USE_UBSAN "-fsanitize=undefined -fno-sanitize-recover -fsanitize-blacklist=${UBSAN_BLACKLIST}")
   endif ()
   check_cxx_compiler_flag("-fsanitize=undefined -fno-sanitize-recover=all -Wall -Werror" HAS_UBSAN_RECOVER_ALL)
-  if (HAS_UBSAN_RECOVER_ALL)
+  # If we already setup UBSAN recover bare, setting it up again here will be an error.
+  if (NOT USE_SANITIZER AND HAS_UBSAN_RECOVER_ALL)
     sanitizer(USE_UBSAN "-fsanitize=undefined -fno-sanitize-recover=all -fsanitize-blacklist=${UBSAN_BLACKLIST}")
   endif ()
   if (NOT USE_SANITIZER)
@@ -340,6 +350,12 @@ set(WABT_LIBRARY_SRC
 )
 
 add_library(wabt STATIC ${WABT_LIBRARY_SRC})
+
+IF (NOT WIN32)
+  add_library(wasm-rt-impl STATIC wasm2c/wasm-rt-impl.c wasm2c/wasm-rt-impl.h)
+  install(TARGETS wasm-rt-impl DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  install(FILES wasm2c/wasm-rt.h wasm2c/wasm-rt-impl.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif ()
 
 if (BUILD_FUZZ_TOOLS)
   set(FUZZ_FLAGS "-fsanitize=fuzzer,address")

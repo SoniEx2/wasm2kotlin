@@ -79,7 +79,7 @@ class SharedValidator {
   Result OnGlobalInitExpr_RefNull(const Location&, Type type);
   Result OnGlobalInitExpr_RefFunc(const Location&, Var func_var);
   Result OnGlobalInitExpr_Other(const Location&);
-  Result OnEvent(const Location&, Var sig_var);
+  Result OnTag(const Location&, Var sig_var);
 
   Result OnExport(const Location&,
                   ExternalKind,
@@ -119,17 +119,17 @@ class SharedValidator {
   Result OnBlock(const Location&, Type sig_type);
   Result OnBr(const Location&, Var depth);
   Result OnBrIf(const Location&, Var depth);
-  Result OnBrOnExn(const Location&, Var depth, Var event_index);
   Result BeginBrTable(const Location&);
   Result OnBrTableTarget(const Location&, Var depth);
   Result EndBrTable(const Location&);
   Result OnCall(const Location&, Var func_var);
   Result OnCallIndirect(const Location&, Var sig_var, Var table_var);
-  Result OnCatch(const Location&);
+  Result OnCatch(const Location&, Var tag_var, bool is_catch_all);
   Result OnCompare(const Location&, Opcode);
   Result OnConst(const Location&, Type);
   Result OnConvert(const Location&, Opcode);
   Result OnDataDrop(const Location&, Var segment_var);
+  Result OnDelegate(const Location&, Var depth);
   Result OnDrop(const Location&);
   Result OnElemDrop(const Location&, Var segment_var);
   Result OnElse(const Location&);
@@ -139,6 +139,7 @@ class SharedValidator {
   Result OnIf(const Location&, Type sig_type);
   Result OnLoad(const Location&, Opcode, Address align);
   Result OnLoadSplat(const Location&, Opcode, Address align);
+  Result OnLoadZero(const Location&, Opcode, Address align);
   Result OnLocalGet(const Location&, Var);
   Result OnLocalSet(const Location&, Var);
   Result OnLocalTee(const Location&, Var);
@@ -152,12 +153,14 @@ class SharedValidator {
   Result OnRefFunc(const Location&, Var func_var);
   Result OnRefIsNull(const Location&);
   Result OnRefNull(const Location&, Type type);
-  Result OnRethrow(const Location&);
+  Result OnRethrow(const Location&, Var depth);
   Result OnReturnCall(const Location&, Var func_var);
   Result OnReturnCallIndirect(const Location&, Var sig_var, Var table_var);
   Result OnReturn(const Location&);
-  Result OnSelect(const Location&, Type result_type);
+  Result OnSelect(const Location&, Index result_count, Type* result_types);
   Result OnSimdLaneOp(const Location&, Opcode, uint64_t lane_idx);
+  Result OnSimdLoadLane(const Location&, Opcode, Address align, uint64_t lane_idx);
+  Result OnSimdStoreLane(const Location&, Opcode, Address align, uint64_t lane_idx);
   Result OnSimdShuffleOp(const Location&, Opcode, v128 lane_idx);
   Result OnStore(const Location&, Opcode, Address align);
   Result OnTableCopy(const Location&, Var dst_var, Var src_var);
@@ -168,10 +171,11 @@ class SharedValidator {
   Result OnTableSet(const Location&, Var table_var);
   Result OnTableSize(const Location&, Var table_var);
   Result OnTernary(const Location&, Opcode);
-  Result OnThrow(const Location&, Var event_var);
+  Result OnThrow(const Location&, Var tag_var);
   Result OnTry(const Location&, Type sig_type);
   Result OnUnary(const Location&, Opcode);
   Result OnUnreachable(const Location&);
+  Result OnUnwind(const Location&);
 
  private:
   struct FuncType {
@@ -220,7 +224,7 @@ class SharedValidator {
     bool mutable_ = true;
   };
 
-  struct EventType {
+  struct TagType {
     TypeVector params;
   };
 
@@ -260,7 +264,7 @@ class SharedValidator {
   Result CheckTableIndex(Var table_var, TableType* out = nullptr);
   Result CheckMemoryIndex(Var memory_var, MemoryType* out = nullptr);
   Result CheckGlobalIndex(Var global_var, GlobalType* out = nullptr);
-  Result CheckEventIndex(Var event_var, EventType* out = nullptr);
+  Result CheckTagIndex(Var tag_var, TagType* out = nullptr);
   Result CheckElemSegmentIndex(Var elem_segment_var, ElemType* out = nullptr);
   Result CheckDataSegmentIndex(Var data_segment_var);
 
@@ -290,7 +294,7 @@ class SharedValidator {
   std::vector<TableType> tables_;     // Includes imported and defined.
   std::vector<MemoryType> memories_;  // Includes imported and defined.
   std::vector<GlobalType> globals_;   // Includes imported and defined.
-  std::vector<EventType> events_;     // Includes imported and defined.
+  std::vector<TagType> tags_;         // Includes imported and defined.
   std::vector<ElemType> elems_;
   Index starts_ = 0;
   Index num_imported_globals_ = 0;

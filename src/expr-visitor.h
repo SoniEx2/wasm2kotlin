@@ -42,6 +42,7 @@ class ExprVisitor {
     Loop,
     Try,
     Catch,
+    Unwind,
   };
 
   Result HandleDefaultState(Expr*);
@@ -49,6 +50,8 @@ class ExprVisitor {
   void PopDefault();
   void PushExprlist(State state, Expr*, ExprList&);
   void PopExprlist();
+  void PushCatch(Expr*, Index catch_index, ExprList&);
+  void PopCatch();
 
   Delegate* delegate_;
 
@@ -58,6 +61,7 @@ class ExprVisitor {
   std::vector<State> state_stack_;
   std::vector<Expr*> expr_stack_;
   std::vector<ExprList::iterator> expr_iter_stack_;
+  std::vector<Index> catch_index_stack_;
 };
 
 class ExprVisitor::Delegate {
@@ -69,7 +73,6 @@ class ExprVisitor::Delegate {
   virtual Result EndBlockExpr(BlockExpr*) = 0;
   virtual Result OnBrExpr(BrExpr*) = 0;
   virtual Result OnBrIfExpr(BrIfExpr*) = 0;
-  virtual Result OnBrOnExnExpr(BrOnExnExpr*) = 0;
   virtual Result OnBrTableExpr(BrTableExpr*) = 0;
   virtual Result OnCallExpr(CallExpr*) = 0;
   virtual Result OnCallIndirectExpr(CallIndirectExpr*) = 0;
@@ -114,7 +117,9 @@ class ExprVisitor::Delegate {
   virtual Result OnUnaryExpr(UnaryExpr*) = 0;
   virtual Result OnUnreachableExpr(UnreachableExpr*) = 0;
   virtual Result BeginTryExpr(TryExpr*) = 0;
-  virtual Result OnCatchExpr(TryExpr*) = 0;
+  virtual Result OnCatchExpr(TryExpr*, Catch*) = 0;
+  virtual Result OnUnwindExpr(TryExpr*) = 0;
+  virtual Result OnDelegateExpr(TryExpr*) = 0;
   virtual Result EndTryExpr(TryExpr*) = 0;
   virtual Result OnThrowExpr(ThrowExpr*) = 0;
   virtual Result OnRethrowExpr(RethrowExpr*) = 0;
@@ -127,8 +132,11 @@ class ExprVisitor::Delegate {
   virtual Result OnAtomicRmwCmpxchgExpr(AtomicRmwCmpxchgExpr*) = 0;
   virtual Result OnTernaryExpr(TernaryExpr*) = 0;
   virtual Result OnSimdLaneOpExpr(SimdLaneOpExpr*) = 0;
+  virtual Result OnSimdLoadLaneExpr(SimdLoadLaneExpr*) = 0;
+  virtual Result OnSimdStoreLaneExpr(SimdStoreLaneExpr*) = 0;
   virtual Result OnSimdShuffleOpExpr(SimdShuffleOpExpr*) = 0;
   virtual Result OnLoadSplatExpr(LoadSplatExpr*) = 0;
+  virtual Result OnLoadZeroExpr(LoadZeroExpr*) = 0;
 };
 
 class ExprVisitor::DelegateNop : public ExprVisitor::Delegate {
@@ -138,7 +146,6 @@ class ExprVisitor::DelegateNop : public ExprVisitor::Delegate {
   Result EndBlockExpr(BlockExpr*) override { return Result::Ok; }
   Result OnBrExpr(BrExpr*) override { return Result::Ok; }
   Result OnBrIfExpr(BrIfExpr*) override { return Result::Ok; }
-  Result OnBrOnExnExpr(BrOnExnExpr*) override { return Result::Ok; }
   Result OnBrTableExpr(BrTableExpr*) override { return Result::Ok; }
   Result OnCallExpr(CallExpr*) override { return Result::Ok; }
   Result OnCallIndirectExpr(CallIndirectExpr*) override { return Result::Ok; }
@@ -185,7 +192,9 @@ class ExprVisitor::DelegateNop : public ExprVisitor::Delegate {
   Result OnUnaryExpr(UnaryExpr*) override { return Result::Ok; }
   Result OnUnreachableExpr(UnreachableExpr*) override { return Result::Ok; }
   Result BeginTryExpr(TryExpr*) override { return Result::Ok; }
-  Result OnCatchExpr(TryExpr*) override { return Result::Ok; }
+  Result OnCatchExpr(TryExpr*, Catch*) override { return Result::Ok; }
+  Result OnUnwindExpr(TryExpr*) override { return Result::Ok; }
+  Result OnDelegateExpr(TryExpr*) override { return Result::Ok; }
   Result EndTryExpr(TryExpr*) override { return Result::Ok; }
   Result OnThrowExpr(ThrowExpr*) override { return Result::Ok; }
   Result OnRethrowExpr(RethrowExpr*) override { return Result::Ok; }
@@ -200,8 +209,11 @@ class ExprVisitor::DelegateNop : public ExprVisitor::Delegate {
   }
   Result OnTernaryExpr(TernaryExpr*) override { return Result::Ok; }
   Result OnSimdLaneOpExpr(SimdLaneOpExpr*) override { return Result::Ok; }
+  Result OnSimdLoadLaneExpr(SimdLoadLaneExpr*) override { return Result::Ok; }
+  Result OnSimdStoreLaneExpr(SimdStoreLaneExpr*) override { return Result::Ok; }
   Result OnSimdShuffleOpExpr(SimdShuffleOpExpr*) override { return Result::Ok; }
   Result OnLoadSplatExpr(LoadSplatExpr*) override { return Result::Ok; }
+  Result OnLoadZeroExpr(LoadZeroExpr*) override { return Result::Ok; }
 };
 
 }  // namespace wabt

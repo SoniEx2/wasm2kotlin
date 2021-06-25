@@ -41,8 +41,8 @@ const char* GetName(ExternKind kind) {
 
 const char* GetName(ObjectKind kind) {
   static const char* kNames[] = {
-      "Null",   "Foreign", "Trap",  "DefinedFunc", "HostFunc", "Table",
-      "Memory", "Global",  "Event", "Module",      "Instance", "Thread",
+      "Null",   "Foreign", "Trap", "DefinedFunc", "HostFunc", "Table",
+      "Memory", "Global",  "Tag",  "Module",      "Instance", "Thread",
   };
   return kNames[int(kind)];
 }
@@ -156,13 +156,13 @@ Result Match(const GlobalType& expected,
   return Result::Ok;
 }
 
-//// EventType ////
-std::unique_ptr<ExternType> EventType::Clone() const {
-  return MakeUnique<EventType>(*this);
+//// TagType ////
+std::unique_ptr<ExternType> TagType::Clone() const {
+  return MakeUnique<TagType>(*this);
 }
 
-Result Match(const EventType& expected,
-             const EventType& actual,
+Result Match(const TagType& expected,
+             const TagType& actual,
              std::string* out_msg) {
   // TODO signature
   return Result::Ok;
@@ -217,8 +217,6 @@ bool Store::HasValueType(Ref ref, ValueType type) const {
     case ValueType::FuncRef:
       return obj->kind() == ObjectKind::DefinedFunc ||
              obj->kind() == ObjectKind::HostFunc;
-    case ValueType::ExnRef:  // TODO
-      return false;
     default:
       return false;
   }
@@ -531,8 +529,15 @@ Result Memory::Match(class Store& store,
 Result Memory::Grow(u64 count) {
   u64 new_pages;
   if (CanGrow<u64>(type_.limits, pages_, count, &new_pages)) {
+#if WABT_BIG_ENDIAN
+    auto old_size = data_.size();
+#endif
     pages_ = new_pages;
     data_.resize(new_pages * WABT_PAGE_SIZE);
+#if WABT_BIG_ENDIAN
+    std::move_backward(data_.begin(), data_.begin() + old_size, data_.end());
+    std::fill(data_.begin(), data_.end() - old_size, 0);
+#endif
     return Result::Ok;
   }
   return Result::Error;
@@ -540,7 +545,11 @@ Result Memory::Grow(u64 count) {
 
 Result Memory::Fill(u64 offset, u8 value, u64 size) {
   if (IsValidAccess(offset, 0, size)) {
+#if WABT_BIG_ENDIAN
+    std::fill(data_.end() - offset - size, data_.end() - offset, value);
+#else
     std::fill(data_.begin() + offset, data_.begin() + offset + size, value);
+#endif
     return Result::Ok;
   }
   return Result::Error;
@@ -554,7 +563,11 @@ Result Memory::Init(u64 dst_offset,
       src.IsValidRange(src_offset, size)) {
     std::copy(src.desc().data.begin() + src_offset,
               src.desc().data.begin() + src_offset + size,
+#if WABT_BIG_ENDIAN
+              data_.rbegin() + dst_offset);
+#else
               data_.begin() + dst_offset);
+#endif
     return Result::Ok;
   }
   return Result::Error;
@@ -568,9 +581,14 @@ Result Memory::Copy(Memory& dst,
                     u64 size) {
   if (dst.IsValidAccess(dst_offset, 0, size) &&
       src.IsValidAccess(src_offset, 0, size)) {
+#if WABT_BIG_ENDIAN
+    auto src_begin = src.data_.end() - src_offset - size;
+    auto dst_begin = dst.data_.end() - dst_offset - size;
+#else
     auto src_begin = src.data_.begin() + src_offset;
-    auto src_end = src_begin + size;
     auto dst_begin = dst.data_.begin() + dst_offset;
+#endif
+    auto src_end = src_begin + size;
     auto dst_end = dst_begin + size;
     if (src.self() == dst.self() && src_begin < dst_begin) {
       std::move_backward(src_begin, src_end, dst_end);
@@ -637,14 +655,14 @@ void Global::UnsafeSet(Value value) {
   value_ = value;
 }
 
-//// Event ////
-Event::Event(Store&, EventType type) : Extern(skind), type_(type) {}
+//// Tag ////
+Tag::Tag(Store&, TagType type) : Extern(skind), type_(type) {}
 
-void Event::Mark(Store&) {}
+void Tag::Mark(Store&) {}
 
-Result Event::Match(Store& store,
-                    const ImportType& import_type,
-                    Trap::Ptr* out_trap) {
+Result Tag::Match(Store& store,
+                  const ImportType& import_type,
+                  Trap::Ptr* out_trap) {
   return MatchImpl(store, import_type, type_, out_trap);
 }
 
@@ -740,7 +758,7 @@ Instance::Ptr Instance::Instantiate(Store& store,
       case ExternKind::Table:  inst->tables_.push_back(extern_ref); break;
       case ExternKind::Memory: inst->memories_.push_back(extern_ref); break;
       case ExternKind::Global: inst->globals_.push_back(extern_ref); break;
-      case ExternKind::Event:  inst->events_.push_back(extern_ref); break;
+      case ExternKind::Tag:    inst->tags_.push_back(extern_ref); break;
     }
   }
 
@@ -766,9 +784,9 @@ Instance::Ptr Instance::Instantiate(Store& store,
             .ref());
   }
 
-  // Events.
-  for (auto&& desc : mod->desc().events) {
-    inst->events_.push_back(Event::New(store, desc.type).ref());
+  // Tags.
+  for (auto&& desc : mod->desc().tags) {
+    inst->tags_.push_back(Tag::New(store, desc.type).ref());
   }
 
   // Exports.
@@ -779,7 +797,7 @@ Instance::Ptr Instance::Instantiate(Store& store,
       case ExternKind::Table:  ref = inst->tables_[desc.index]; break;
       case ExternKind::Memory: ref = inst->memories_[desc.index]; break;
       case ExternKind::Global: ref = inst->globals_[desc.index]; break;
-      case ExternKind::Event:  ref = inst->events_[desc.index]; break;
+      case ExternKind::Tag:    ref = inst->tags_[desc.index]; break;
     }
     inst->exports_.push_back(ref);
   }
@@ -832,7 +850,9 @@ Instance::Ptr Instance::Instantiate(Store& store,
       if (desc.mode == SegmentMode::Active) {
         Result result;
         Memory::Ptr memory{store, inst->memories_[desc.memory_index]};
-        u32 offset = inst->ResolveInitExpr(store, desc.offset).Get<u32>();
+        Value offset_op = inst->ResolveInitExpr(store, desc.offset);
+        u64 offset = memory->type().limits.is_64 ? offset_op.Get<u64>()
+                                                 : offset_op.Get<u32>();
         if (pass == Check) {
           result = memory->IsValidAccess(offset, 0, segment.size())
                        ? Result::Ok
@@ -846,8 +866,9 @@ Instance::Ptr Instance::Instantiate(Store& store,
           *out_trap = Trap::New(
               store,
               StringPrintf("out of bounds memory access: data segment is "
-                           "out of bounds: [%u, %" PRIu64 ") >= max value %"
-                           PRIu64, offset, u64{offset} + segment.size(),
+                           "out of bounds: [%" PRIu64 ", %" PRIu64
+                           ") >= max value %"
+                           PRIu64, offset, offset + segment.size(),
                            memory->ByteSize()));
           return {};
         }
@@ -876,7 +897,7 @@ void Instance::Mark(Store& store) {
   store.Mark(memories_);
   store.Mark(tables_);
   store.Mark(globals_);
-  store.Mark(events_);
+  store.Mark(tags_);
   store.Mark(exports_);
   for (auto&& elem : elems_) {
     elem.Mark(store);
@@ -1021,6 +1042,10 @@ Value Thread::Pop() {
   auto value = values_.back();
   values_.pop_back();
   return value;
+}
+
+u64 Thread::PopPtr(const Memory::Ptr& memory) {
+  return memory->type().limits.is_64 ? Pop<u64>() : Pop<u32>();
 }
 
 template <typename T>
@@ -1187,15 +1212,15 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
     case O::MemoryGrow: {
       Memory::Ptr memory{store_, inst_->memories()[instr.imm_u32]};
       u64 old_size = memory->PageSize();
-      if (Failed(memory->Grow(Pop<u32>()))) {
-        if (memory->type().limits.is_64) {
+      if (memory->type().limits.is_64) {
+        if (Failed(memory->Grow(Pop<u64>()))) {
           Push<s64>(-1);
         } else {
-          Push<s32>(-1);
+          Push<u64>(old_size);
         }
       } else {
-        if (memory->type().limits.is_64) {
-          Push<u64>(old_size);
+        if (Failed(memory->Grow(Pop<u32>()))) {
+          Push<s32>(-1);
         } else {
           Push<u32>(old_size);
         }
@@ -1476,6 +1501,12 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
     case O::I32X4LeU: return DoSimdBinop(LeMask<u32>);
     case O::I32X4GeS: return DoSimdBinop(GeMask<s32>);
     case O::I32X4GeU: return DoSimdBinop(GeMask<u32>);
+    case O::I64X2Eq:  return DoSimdBinop(EqMask<u64>);
+    case O::I64X2Ne:  return DoSimdBinop(NeMask<u64>);
+    case O::I64X2LtS: return DoSimdBinop(LtMask<s64>);
+    case O::I64X2GtS: return DoSimdBinop(GtMask<s64>);
+    case O::I64X2LeS: return DoSimdBinop(LeMask<s64>);
+    case O::I64X2GeS: return DoSimdBinop(GeMask<s64>);
     case O::F32X4Eq:  return DoSimdBinop(EqMask<f32>);
     case O::F32X4Ne:  return DoSimdBinop(NeMask<f32>);
     case O::F32X4Lt:  return DoSimdBinop(LtMask<f32>);
@@ -1494,38 +1525,37 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
     case O::V128Or:        return DoSimdBinop(IntOr<u64>);
     case O::V128Xor:       return DoSimdBinop(IntXor<u64>);
     case O::V128BitSelect: return DoSimdBitSelect();
+    case O::V128AnyTrue:      return DoSimdIsTrue<u8x16, 1>();
 
     case O::I8X16Neg:          return DoSimdUnop(IntNeg<u8>);
-    case O::I8X16AnyTrue:      return DoSimdIsTrue<u8x16, 1>();
     case O::I8X16Bitmask:      return DoSimdBitmask<s8x16>();
     case O::I8X16AllTrue:      return DoSimdIsTrue<u8x16, 16>();
     case O::I8X16Shl:          return DoSimdShift(IntShl<u8>);
     case O::I8X16ShrS:         return DoSimdShift(IntShr<s8>);
     case O::I8X16ShrU:         return DoSimdShift(IntShr<u8>);
     case O::I8X16Add:          return DoSimdBinop(Add<u8>);
-    case O::I8X16AddSaturateS: return DoSimdBinop(IntAddSat<s8>);
-    case O::I8X16AddSaturateU: return DoSimdBinop(IntAddSat<u8>);
+    case O::I8X16AddSatS:      return DoSimdBinop(IntAddSat<s8>);
+    case O::I8X16AddSatU:      return DoSimdBinop(IntAddSat<u8>);
     case O::I8X16Sub:          return DoSimdBinop(Sub<u8>);
-    case O::I8X16SubSaturateS: return DoSimdBinop(IntSubSat<s8>);
-    case O::I8X16SubSaturateU: return DoSimdBinop(IntSubSat<u8>);
+    case O::I8X16SubSatS:      return DoSimdBinop(IntSubSat<s8>);
+    case O::I8X16SubSatU:      return DoSimdBinop(IntSubSat<u8>);
     case O::I8X16MinS:         return DoSimdBinop(IntMin<s8>);
     case O::I8X16MinU:         return DoSimdBinop(IntMin<u8>);
     case O::I8X16MaxS:         return DoSimdBinop(IntMax<s8>);
     case O::I8X16MaxU:         return DoSimdBinop(IntMax<u8>);
 
     case O::I16X8Neg:          return DoSimdUnop(IntNeg<u16>);
-    case O::I16X8AnyTrue:      return DoSimdIsTrue<u16x8, 1>();
     case O::I16X8Bitmask:      return DoSimdBitmask<s16x8>();
     case O::I16X8AllTrue:      return DoSimdIsTrue<u16x8, 8>();
     case O::I16X8Shl:          return DoSimdShift(IntShl<u16>);
     case O::I16X8ShrS:         return DoSimdShift(IntShr<s16>);
     case O::I16X8ShrU:         return DoSimdShift(IntShr<u16>);
     case O::I16X8Add:          return DoSimdBinop(Add<u16>);
-    case O::I16X8AddSaturateS: return DoSimdBinop(IntAddSat<s16>);
-    case O::I16X8AddSaturateU: return DoSimdBinop(IntAddSat<u16>);
+    case O::I16X8AddSatS:      return DoSimdBinop(IntAddSat<s16>);
+    case O::I16X8AddSatU:      return DoSimdBinop(IntAddSat<u16>);
     case O::I16X8Sub:          return DoSimdBinop(Sub<u16>);
-    case O::I16X8SubSaturateS: return DoSimdBinop(IntSubSat<s16>);
-    case O::I16X8SubSaturateU: return DoSimdBinop(IntSubSat<u16>);
+    case O::I16X8SubSatS:      return DoSimdBinop(IntSubSat<s16>);
+    case O::I16X8SubSatU:      return DoSimdBinop(IntSubSat<u16>);
     case O::I16X8Mul:          return DoSimdBinop(Mul<u16>);
     case O::I16X8MinS:         return DoSimdBinop(IntMin<s16>);
     case O::I16X8MinU:         return DoSimdBinop(IntMin<u16>);
@@ -1533,7 +1563,6 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
     case O::I16X8MaxU:         return DoSimdBinop(IntMax<u16>);
 
     case O::I32X4Neg:          return DoSimdUnop(IntNeg<u32>);
-    case O::I32X4AnyTrue:      return DoSimdIsTrue<u32x4, 1>();
     case O::I32X4Bitmask:      return DoSimdBitmask<s32x4>();
     case O::I32X4AllTrue:      return DoSimdIsTrue<u32x4, 4>();
     case O::I32X4Shl:          return DoSimdShift(IntShl<u32>);
@@ -1548,12 +1577,24 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
     case O::I32X4MaxU:         return DoSimdBinop(IntMax<u32>);
 
     case O::I64X2Neg:          return DoSimdUnop(IntNeg<u64>);
+    case O::I64X2Bitmask:      return DoSimdBitmask<s64x2>();
+    case O::I64X2AllTrue:      return DoSimdIsTrue<u64x2, 2>();
     case O::I64X2Shl:          return DoSimdShift(IntShl<u64>);
     case O::I64X2ShrS:         return DoSimdShift(IntShr<s64>);
     case O::I64X2ShrU:         return DoSimdShift(IntShr<u64>);
     case O::I64X2Add:          return DoSimdBinop(Add<u64>);
     case O::I64X2Sub:          return DoSimdBinop(Sub<u64>);
     case O::I64X2Mul:          return DoSimdBinop(Mul<u64>);
+
+    case O::F32X4Ceil:         return DoSimdUnop(FloatCeil<f32>);
+    case O::F32X4Floor:        return DoSimdUnop(FloatFloor<f32>);
+    case O::F32X4Trunc:        return DoSimdUnop(FloatTrunc<f32>);
+    case O::F32X4Nearest:      return DoSimdUnop(FloatNearest<f32>);
+
+    case O::F64X2Ceil:         return DoSimdUnop(FloatCeil<f64>);
+    case O::F64X2Floor:        return DoSimdUnop(FloatFloor<f64>);
+    case O::F64X2Trunc:        return DoSimdUnop(FloatTrunc<f64>);
+    case O::F64X2Nearest:      return DoSimdUnop(FloatNearest<f64>);
 
     case O::F32X4Abs:          return DoSimdUnop(FloatAbs<f32>);
     case O::F32X4Neg:          return DoSimdUnop(FloatNeg<f32>);
@@ -1564,6 +1605,8 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
     case O::F32X4Div:          return DoSimdBinop(FloatDiv<f32>);
     case O::F32X4Min:          return DoSimdBinop(FloatMin<f32>);
     case O::F32X4Max:          return DoSimdBinop(FloatMax<f32>);
+    case O::F32X4PMin:         return DoSimdBinop(FloatPMin<f32>);
+    case O::F32X4PMax:         return DoSimdBinop(FloatPMax<f32>);
 
     case O::F64X2Abs:          return DoSimdUnop(FloatAbs<f64>);
     case O::F64X2Neg:          return DoSimdUnop(FloatNeg<f64>);
@@ -1574,39 +1617,64 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
     case O::F64X2Div:          return DoSimdBinop(FloatDiv<f64>);
     case O::F64X2Min:          return DoSimdBinop(FloatMin<f64>);
     case O::F64X2Max:          return DoSimdBinop(FloatMax<f64>);
+    case O::F64X2PMin:         return DoSimdBinop(FloatPMin<f64>);
+    case O::F64X2PMax:         return DoSimdBinop(FloatPMax<f64>);
 
     case O::I32X4TruncSatF32X4S: return DoSimdUnop(IntTruncSat<s32, f32>);
     case O::I32X4TruncSatF32X4U: return DoSimdUnop(IntTruncSat<u32, f32>);
     case O::F32X4ConvertI32X4S:  return DoSimdUnop(Convert<f32, s32>);
     case O::F32X4ConvertI32X4U:  return DoSimdUnop(Convert<f32, u32>);
+    case O::F32X4DemoteF64X2Zero: return DoSimdUnopZero(Convert<f32, f64>);
+    case O::F64X2PromoteLowF32X4: return DoSimdConvert<f64x2, f32x4, true>();
+    case O::I32X4TruncSatF64X2SZero: return DoSimdUnopZero(IntTruncSat<s32, f64>);
+    case O::I32X4TruncSatF64X2UZero: return DoSimdUnopZero(IntTruncSat<u32, f64>);
+    case O::F64X2ConvertLowI32X4S: return DoSimdConvert<f64x2, s32x4, true>();
+    case O::F64X2ConvertLowI32X4U: return DoSimdConvert<f64x2, u32x4, true>();
 
-    case O::V8X16Swizzle:     return DoSimdSwizzle();
-    case O::V8X16Shuffle:     return DoSimdShuffle(instr);
+    case O::I8X16Swizzle:     return DoSimdSwizzle();
+    case O::I8X16Shuffle:     return DoSimdShuffle(instr);
 
-    case O::V8X16LoadSplat:   return DoSimdLoadSplat<u8x16, u32>(instr, out_trap);
-    case O::V16X8LoadSplat:   return DoSimdLoadSplat<u16x8, u32>(instr, out_trap);
-    case O::V32X4LoadSplat:   return DoSimdLoadSplat<u32x4, u32>(instr, out_trap);
-    case O::V64X2LoadSplat:   return DoSimdLoadSplat<u64x2, u64>(instr, out_trap);
+    case O::V128Load8Splat:    return DoSimdLoadSplat<u8x16, u32>(instr, out_trap);
+    case O::V128Load16Splat:   return DoSimdLoadSplat<u16x8, u32>(instr, out_trap);
+    case O::V128Load32Splat:   return DoSimdLoadSplat<u32x4, u32>(instr, out_trap);
+    case O::V128Load64Splat:   return DoSimdLoadSplat<u64x2, u64>(instr, out_trap);
+
+    case O::V128Load8Lane:    return DoSimdLoadLane<u8x16>(instr, out_trap);
+    case O::V128Load16Lane:   return DoSimdLoadLane<u16x8>(instr, out_trap);
+    case O::V128Load32Lane:   return DoSimdLoadLane<u32x4>(instr, out_trap);
+    case O::V128Load64Lane:   return DoSimdLoadLane<u64x2>(instr, out_trap);
+
+    case O::V128Store8Lane:    return DoSimdStoreLane<u8x16>(instr, out_trap);
+    case O::V128Store16Lane:   return DoSimdStoreLane<u16x8>(instr, out_trap);
+    case O::V128Store32Lane:   return DoSimdStoreLane<u32x4>(instr, out_trap);
+    case O::V128Store64Lane:   return DoSimdStoreLane<u64x2>(instr, out_trap);
+
+    case O::V128Load32Zero: return DoSimdLoadZero<u32x4, u32>(instr, out_trap);
+    case O::V128Load64Zero: return DoSimdLoadZero<u64x2, u64>(instr, out_trap);
 
     case O::I8X16NarrowI16X8S:    return DoSimdNarrow<s8x16, s16x8>();
     case O::I8X16NarrowI16X8U:    return DoSimdNarrow<u8x16, s16x8>();
     case O::I16X8NarrowI32X4S:    return DoSimdNarrow<s16x8, s32x4>();
     case O::I16X8NarrowI32X4U:    return DoSimdNarrow<u16x8, s32x4>();
-    case O::I16X8WidenLowI8X16S:  return DoSimdWiden<s16x8, s8x16, true>();
-    case O::I16X8WidenHighI8X16S: return DoSimdWiden<s16x8, s8x16, false>();
-    case O::I16X8WidenLowI8X16U:  return DoSimdWiden<u16x8, u8x16, true>();
-    case O::I16X8WidenHighI8X16U: return DoSimdWiden<u16x8, u8x16, false>();
-    case O::I32X4WidenLowI16X8S:  return DoSimdWiden<s32x4, s16x8, true>();
-    case O::I32X4WidenHighI16X8S: return DoSimdWiden<s32x4, s16x8, false>();
-    case O::I32X4WidenLowI16X8U:  return DoSimdWiden<u32x4, u16x8, true>();
-    case O::I32X4WidenHighI16X8U: return DoSimdWiden<u32x4, u16x8, false>();
+    case O::I16X8ExtendLowI8X16S:  return DoSimdConvert<s16x8, s8x16, true>();
+    case O::I16X8ExtendHighI8X16S: return DoSimdConvert<s16x8, s8x16, false>();
+    case O::I16X8ExtendLowI8X16U:  return DoSimdConvert<u16x8, u8x16, true>();
+    case O::I16X8ExtendHighI8X16U: return DoSimdConvert<u16x8, u8x16, false>();
+    case O::I32X4ExtendLowI16X8S:  return DoSimdConvert<s32x4, s16x8, true>();
+    case O::I32X4ExtendHighI16X8S: return DoSimdConvert<s32x4, s16x8, false>();
+    case O::I32X4ExtendLowI16X8U:  return DoSimdConvert<u32x4, u16x8, true>();
+    case O::I32X4ExtendHighI16X8U: return DoSimdConvert<u32x4, u16x8, false>();
+    case O::I64X2ExtendLowI32X4S:  return DoSimdConvert<s64x2, s32x4, true>();
+    case O::I64X2ExtendHighI32X4S: return DoSimdConvert<s64x2, s32x4, false>();
+    case O::I64X2ExtendLowI32X4U:  return DoSimdConvert<u64x2, u32x4, true>();
+    case O::I64X2ExtendHighI32X4U: return DoSimdConvert<u64x2, u32x4, false>();
 
-    case O::I16X8Load8X8S:  return DoSimdLoadExtend<s16x8, s8x8>(instr, out_trap);
-    case O::I16X8Load8X8U:  return DoSimdLoadExtend<u16x8, u8x8>(instr, out_trap);
-    case O::I32X4Load16X4S: return DoSimdLoadExtend<s32x4, s16x4>(instr, out_trap);
-    case O::I32X4Load16X4U: return DoSimdLoadExtend<u32x4, u16x4>(instr, out_trap);
-    case O::I64X2Load32X2S: return DoSimdLoadExtend<s64x2, s32x2>(instr, out_trap);
-    case O::I64X2Load32X2U: return DoSimdLoadExtend<u64x2, u32x2>(instr, out_trap);
+    case O::V128Load8X8S:  return DoSimdLoadExtend<s16x8, s8x8>(instr, out_trap);
+    case O::V128Load8X8U:  return DoSimdLoadExtend<u16x8, u8x8>(instr, out_trap);
+    case O::V128Load16X4S: return DoSimdLoadExtend<s32x4, s16x4>(instr, out_trap);
+    case O::V128Load16X4U: return DoSimdLoadExtend<u32x4, u16x4>(instr, out_trap);
+    case O::V128Load32X2S: return DoSimdLoadExtend<s64x2, s32x2>(instr, out_trap);
+    case O::V128Load32X2U: return DoSimdLoadExtend<u64x2, u32x2>(instr, out_trap);
 
     case O::V128Andnot: return DoSimdBinop(IntAndNot<u64>);
     case O::I8X16AvgrU: return DoSimdBinop(IntAvgr<u8>);
@@ -1615,11 +1683,36 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
     case O::I8X16Abs: return DoSimdUnop(IntAbs<u8>);
     case O::I16X8Abs: return DoSimdUnop(IntAbs<u16>);
     case O::I32X4Abs: return DoSimdUnop(IntAbs<u32>);
+    case O::I64X2Abs: return DoSimdUnop(IntAbs<u64>);
+
+    case O::I8X16Popcnt: return DoSimdUnop(IntPopcnt<u8>);
+
+    case O::I16X8ExtaddPairwiseI8X16S: return DoSimdExtaddPairwise<s16x8, s8x16>();
+    case O::I16X8ExtaddPairwiseI8X16U: return DoSimdExtaddPairwise<u16x8, u8x16>();
+    case O::I32X4ExtaddPairwiseI16X8S: return DoSimdExtaddPairwise<s32x4, s16x8>();
+    case O::I32X4ExtaddPairwiseI16X8U: return DoSimdExtaddPairwise<u32x4, u16x8>();
+
+    case O::I16X8ExtmulLowI8X16S: return DoSimdExtmul<s16x8, s8x16, true>();
+    case O::I16X8ExtmulHighI8X16S: return DoSimdExtmul<s16x8, s8x16, false>();
+    case O::I16X8ExtmulLowI8X16U: return DoSimdExtmul<u16x8, u8x16, true>();
+    case O::I16X8ExtmulHighI8X16U: return DoSimdExtmul<u16x8, u8x16, false>();
+    case O::I32X4ExtmulLowI16X8S: return DoSimdExtmul<s32x4, s16x8, true>();
+    case O::I32X4ExtmulHighI16X8S: return DoSimdExtmul<s32x4, s16x8, false>();
+    case O::I32X4ExtmulLowI16X8U: return DoSimdExtmul<u32x4, u16x8, true>();
+    case O::I32X4ExtmulHighI16X8U: return DoSimdExtmul<u32x4, u16x8, false>();
+    case O::I64X2ExtmulLowI32X4S: return DoSimdExtmul<s64x2, s32x4, true>();
+    case O::I64X2ExtmulHighI32X4S: return DoSimdExtmul<s64x2, s32x4, false>();
+    case O::I64X2ExtmulLowI32X4U: return DoSimdExtmul<u64x2, u32x4, true>();
+    case O::I64X2ExtmulHighI32X4U: return DoSimdExtmul<u64x2, u32x4, false>();
+
+    case O::I16X8Q15mulrSatS: return DoSimdBinop(SaturatingRoundingQMul<s16>);
+
+    case O::I32X4DotI16X8S: return DoSimdDot<u32x4, s16x8>();
 
     case O::AtomicFence:
-    case O::AtomicNotify:
-    case O::I32AtomicWait:
-    case O::I64AtomicWait:
+    case O::MemoryAtomicNotify:
+    case O::MemoryAtomicWait32:
+    case O::MemoryAtomicWait64:
       return TRAP("not implemented");
 
     case O::I32AtomicLoad:       return DoAtomicLoad<u32>(instr, out_trap);
@@ -1700,9 +1793,11 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
 
     case O::Try:
     case O::Catch:
+    case O::CatchAll:
+    case O::Unwind:
+    case O::Delegate:
     case O::Throw:
     case O::Rethrow:
-    case O::BrOnExn:
     case O::InterpData:
     case O::Invalid:
       WABT_UNREACHABLE;
@@ -1740,7 +1835,7 @@ RunResult Thread::DoCall(const Func::Ptr& func, Trap::Ptr* out_trap) {
 template <typename T>
 RunResult Thread::Load(Instr instr, T* out, Trap::Ptr* out_trap) {
   Memory::Ptr memory{store_, inst_->memories()[instr.imm_u32x2.fst]};
-  u64 offset = memory->type().limits.is_64 ? Pop<u64>() : Pop<u32>();
+  u64 offset = PopPtr(memory);
   TRAP_IF(Failed(memory->Load(offset, instr.imm_u32x2.snd, out)),
           StringPrintf("out of bounds memory access: access at %" PRIu64
                        "+%" PRIzd " >= max value %" PRIu64,
@@ -1763,7 +1858,7 @@ template <typename T, typename V>
 RunResult Thread::DoStore(Instr instr, Trap::Ptr* out_trap) {
   Memory::Ptr memory{store_, inst_->memories()[instr.imm_u32x2.fst]};
   V val = static_cast<V>(Pop<T>());
-  u64 offset = memory->type().limits.is_64 ? Pop<u64>() : Pop<u32>();
+  u64 offset = PopPtr(memory);
   TRAP_IF(Failed(memory->Store(offset, instr.imm_u32x2.snd, val)),
           StringPrintf("out of bounds memory access: access at %" PRIu64
                        "+%" PRIzd " >= max value %" PRIu64,
@@ -1829,7 +1924,7 @@ RunResult Thread::DoMemoryInit(Instr instr, Trap::Ptr* out_trap) {
   auto&& data = inst_->datas()[instr.imm_u32x2.snd];
   auto size = Pop<u32>();
   auto src = Pop<u32>();
-  auto dst = Pop<u32>();
+  auto dst = PopPtr(memory);
   TRAP_IF(Failed(memory->Init(dst, data, src, size)),
           "out of bounds memory access: memory.init out of bounds");
   return RunResult::Ok;
@@ -1843,9 +1938,9 @@ RunResult Thread::DoDataDrop(Instr instr) {
 RunResult Thread::DoMemoryCopy(Instr instr, Trap::Ptr* out_trap) {
   Memory::Ptr mem_dst{store_, inst_->memories()[instr.imm_u32x2.fst]};
   Memory::Ptr mem_src{store_, inst_->memories()[instr.imm_u32x2.snd]};
-  auto size = Pop<u32>();
-  auto src = Pop<u32>();
-  auto dst = Pop<u32>();
+  auto size = PopPtr(mem_src);
+  auto src = PopPtr(mem_src);
+  auto dst = PopPtr(mem_dst);
   // TODO: change to "out of bounds"
   TRAP_IF(Failed(Memory::Copy(*mem_dst, dst, *mem_src, src, size)),
           "out of bounds memory access: memory.copy out of bound");
@@ -1854,9 +1949,9 @@ RunResult Thread::DoMemoryCopy(Instr instr, Trap::Ptr* out_trap) {
 
 RunResult Thread::DoMemoryFill(Instr instr, Trap::Ptr* out_trap) {
   Memory::Ptr memory{store_, inst_->memories()[instr.imm_u32]};
-  auto size = Pop<u32>();
+  auto size = PopPtr(memory);
   auto value = Pop<u32>();
-  auto dst = Pop<u32>();
+  auto dst = PopPtr(memory);
   TRAP_IF(Failed(memory->Fill(dst, value, size)),
           "out of bounds memory access: memory.fill out of bounds");
   return RunResult::Ok;
@@ -1952,7 +2047,7 @@ RunResult Thread::DoSimdSplat() {
 
 template <typename R, typename T>
 RunResult Thread::DoSimdExtract(Instr instr) {
-  Push<T>(Pop<R>().v[instr.imm_u8]);
+  Push<T>(Pop<R>()[instr.imm_u8]);
   return RunResult::Ok;
 }
 
@@ -1960,7 +2055,7 @@ template <typename R, typename T>
 RunResult Thread::DoSimdReplace(Instr instr) {
   auto val = Pop<T>();
   auto simd = Pop<R>();
-  simd.v[instr.imm_u8] = val;
+  simd[instr.imm_u8] = val;
   Push(simd);
   return RunResult::Ok;
 }
@@ -1989,6 +2084,23 @@ RunResult Thread::DoSimdUnop(UnopFunc<R, T> f) {
 }
 
 template <typename R, typename T>
+RunResult Thread::DoSimdUnopZero(UnopFunc<R, T> f) {
+  using ST = typename Simd128<T>::Type;
+  using SR = typename Simd128<R>::Type;
+  auto val = Pop<ST>();
+  SR result;
+  std::transform(std::begin(val.v), std::end(val.v), std::begin(result.v), f);
+  for (u8 i = 0; i < ST::lanes; ++i) {
+    result[i] = f(val[i]);
+  }
+  for (u8 i = ST::lanes; i < SR::lanes; ++i) {
+    result[i] = 0;
+  }
+  Push(result);
+  return RunResult::Ok;
+}
+
+template <typename R, typename T>
 RunResult Thread::DoSimdBinop(BinopFunc<R, T> f) {
   using ST = typename Simd128<T>::Type;
   using SR = typename Simd128<R>::Type;
@@ -1997,7 +2109,7 @@ RunResult Thread::DoSimdBinop(BinopFunc<R, T> f) {
   auto lhs = Pop<ST>();
   SR result;
   for (u8 i = 0; i < SR::lanes; ++i) {
-    result.v[i] = f(lhs.v[i], rhs.v[i]);
+    result[i] = f(lhs[i], rhs[i]);
   }
   Push(result);
   return RunResult::Ok;
@@ -2010,7 +2122,7 @@ RunResult Thread::DoSimdBitSelect() {
   auto lhs = Pop<S>();
   S result;
   for (u8 i = 0; i < S::lanes; ++i) {
-    result.v[i] = (lhs.v[i] & c.v[i]) | (rhs.v[i] & ~c.v[i]);
+    result[i] = (lhs[i] & c[i]) | (rhs[i] & ~c[i]);
   }
   Push(result);
   return RunResult::Ok;
@@ -2030,7 +2142,7 @@ RunResult Thread::DoSimdBitmask() {
   auto val = Pop<S>();
   u32 result = 0;
   for (u8 i = 0; i < S::lanes; ++i) {
-    if (val.v[i] < 0) {
+    if (val[i] < 0) {
       result |= 1 << i;
     }
   }
@@ -2047,7 +2159,7 @@ RunResult Thread::DoSimdShift(BinopFunc<R, T> f) {
   auto lhs = Pop<ST>();
   SR result;
   for (u8 i = 0; i < SR::lanes; ++i) {
-    result.v[i] = f(lhs.v[i], amount);
+    result[i] = f(lhs[i], amount);
   }
   Push(result);
   return RunResult::Ok;
@@ -2066,13 +2178,55 @@ RunResult Thread::DoSimdLoadSplat(Instr instr, Trap::Ptr* out_trap) {
   return RunResult::Ok;
 }
 
+template <typename S>
+RunResult Thread::DoSimdLoadLane(Instr instr, Trap::Ptr* out_trap) {
+  using T = typename S::LaneType;
+  auto result = Pop<S>();
+  T val;
+  if (Load<T>(instr, &val, out_trap) != RunResult::Ok) {
+    return RunResult::Trap;
+  }
+  result.v[instr.imm_u32x2_u8.idx] = val;
+  Push(result);
+  return RunResult::Ok;
+}
+
+template <typename S>
+RunResult Thread::DoSimdStoreLane(Instr instr, Trap::Ptr* out_trap) {
+  using T = typename S::LaneType;
+  Memory::Ptr memory{store_, inst_->memories()[instr.imm_u32x2_u8.fst]};
+  auto result = Pop<S>();
+  T val = result.v[instr.imm_u32x2_u8.idx];
+  u64 offset = PopPtr(memory);
+  TRAP_IF(Failed(memory->Store(offset, instr.imm_u32x2_u8.snd, val)),
+          StringPrintf("out of bounds memory access: access at %" PRIu64
+                       "+%" PRIzd " >= max value %" PRIu64,
+                       offset + instr.imm_u32x2_u8.snd, sizeof(T),
+                       memory->ByteSize()));
+  return RunResult::Ok;
+}
+
+template <typename S, typename T>
+RunResult Thread::DoSimdLoadZero(Instr instr, Trap::Ptr* out_trap) {
+  using L = typename S::LaneType;
+  L val;
+  if (Load<L>(instr, &val, out_trap) != RunResult::Ok) {
+    return RunResult::Trap;
+  }
+  S result;
+  std::fill(std::begin(result.v), std::end(result.v), 0);
+  result[0] = val;
+  Push(result);
+  return RunResult::Ok;
+}
+
 RunResult Thread::DoSimdSwizzle() {
   using S = u8x16;
   auto rhs = Pop<S>();
   auto lhs = Pop<S>();
   S result;
   for (u8 i = 0; i < S::lanes; ++i) {
-    result.v[i] = rhs.v[i] < S::lanes ? lhs.v[rhs.v[i]] : 0;
+    result[i] = rhs[i] < S::lanes ? lhs[rhs[i]] : 0;
   }
   Push(result);
   return RunResult::Ok;
@@ -2085,8 +2239,8 @@ RunResult Thread::DoSimdShuffle(Instr instr) {
   auto lhs = Pop<S>();
   S result;
   for (u8 i = 0; i < S::lanes; ++i) {
-    result.v[i] =
-        sel.v[i] < S::lanes ? lhs.v[sel.v[i]] : rhs.v[sel.v[i] - S::lanes];
+    result[i] =
+        sel[i] < S::lanes ? lhs[sel[i]] : rhs[sel[i] - S::lanes];
   }
   Push(result);
   return RunResult::Ok;
@@ -2100,21 +2254,36 @@ RunResult Thread::DoSimdNarrow() {
   auto lhs = Pop<T>();
   S result;
   for (u8 i = 0; i < T::lanes; ++i) {
-    result.v[i] = Saturate<SL, TL>(lhs.v[i]);
+    result[i] = Saturate<SL, TL>(lhs[i]);
   }
   for (u8 i = 0; i < T::lanes; ++i) {
-    result.v[T::lanes + i] = Saturate<SL, TL>(rhs.v[i]);
+    result[T::lanes + i] = Saturate<SL, TL>(rhs[i]);
   }
   Push(result);
   return RunResult::Ok;
 }
 
 template <typename S, typename T, bool low>
-RunResult Thread::DoSimdWiden() {
+RunResult Thread::DoSimdConvert() {
+  using SL = typename S::LaneType;
   auto val = Pop<T>();
   S result;
   for (u8 i = 0; i < S::lanes; ++i) {
-    result.v[i] = val.v[(low ? 0 : S::lanes) + i];
+    result[i] = Convert<SL>(val[(low ? 0 : S::lanes) + i]);
+  }
+  Push(result);
+  return RunResult::Ok;
+}
+
+template <typename S, typename T, bool low>
+RunResult Thread::DoSimdExtmul() {
+  auto rhs = Pop<T>();
+  auto lhs = Pop<T>();
+  S result;
+  using U = typename S::LaneType;
+  for (u8 i = 0; i < S::lanes; ++i) {
+    u8 laneidx = (low ? 0 : S::lanes) + i;
+    result[i] = U(lhs[laneidx]) * U(rhs[laneidx]);
   }
   Push(result);
   return RunResult::Ok;
@@ -2128,7 +2297,36 @@ RunResult Thread::DoSimdLoadExtend(Instr instr, Trap::Ptr* out_trap) {
   }
   S result;
   for (u8 i = 0; i < S::lanes; ++i) {
-    result.v[i] = val.v[i];
+    result[i] = val[i];
+  }
+  Push(result);
+  return RunResult::Ok;
+}
+
+template <typename S, typename T>
+RunResult Thread::DoSimdExtaddPairwise() {
+  auto val = Pop<T>();
+  S result;
+  using U = typename S::LaneType;
+  for (u8 i = 0; i < S::lanes; ++i) {
+    u8 laneidx = i * 2;
+    result[i] = U(val[laneidx]) + U(val[laneidx+1]);
+  }
+  Push(result);
+  return RunResult::Ok;
+}
+
+template <typename S, typename T>
+RunResult Thread::DoSimdDot() {
+  using SL = typename S::LaneType;
+  auto rhs = Pop<T>();
+  auto lhs = Pop<T>();
+  S result;
+  for (u8 i = 0; i < S::lanes; ++i) {
+    u8 laneidx = i * 2;
+    SL lo = SL(lhs[laneidx]) * SL(rhs[laneidx]);
+    SL hi = SL(lhs[laneidx+1]) * SL(rhs[laneidx+1]);
+    result[i] = Add(lo, hi);
   }
   Push(result);
   return RunResult::Ok;
@@ -2137,7 +2335,7 @@ RunResult Thread::DoSimdLoadExtend(Instr instr, Trap::Ptr* out_trap) {
 template <typename T, typename V>
 RunResult Thread::DoAtomicLoad(Instr instr, Trap::Ptr* out_trap) {
   Memory::Ptr memory{store_, inst_->memories()[instr.imm_u32x2.fst]};
-  u64 offset = memory->type().limits.is_64 ? Pop<u64>() : Pop<u32>();
+  u64 offset = PopPtr(memory);
   V val;
   TRAP_IF(Failed(memory->AtomicLoad(offset, instr.imm_u32x2.snd, &val)),
           StringPrintf("invalid atomic access at %" PRIaddress "+%u", offset,
@@ -2150,7 +2348,7 @@ template <typename T, typename V>
 RunResult Thread::DoAtomicStore(Instr instr, Trap::Ptr* out_trap) {
   Memory::Ptr memory{store_, inst_->memories()[instr.imm_u32x2.fst]};
   V val = static_cast<V>(Pop<T>());
-  u64 offset = memory->type().limits.is_64 ? Pop<u64>() : Pop<u32>();
+  u64 offset = PopPtr(memory);
   TRAP_IF(Failed(memory->AtomicStore(offset, instr.imm_u32x2.snd, val)),
           StringPrintf("invalid atomic access at %" PRIaddress "+%u", offset,
                        instr.imm_u32x2.snd));
@@ -2163,7 +2361,7 @@ RunResult Thread::DoAtomicRmw(BinopFunc<T, T> f,
                               Trap::Ptr* out_trap) {
   Memory::Ptr memory{store_, inst_->memories()[instr.imm_u32x2.fst]};
   T val = static_cast<T>(Pop<R>());
-  u64 offset = memory->type().limits.is_64 ? Pop<u64>() : Pop<u32>();
+  u64 offset = PopPtr(memory);
   T old;
   TRAP_IF(Failed(memory->AtomicRmw(offset, instr.imm_u32x2.snd, val, f, &old)),
           StringPrintf("invalid atomic access at %" PRIaddress "+%u", offset,
@@ -2178,7 +2376,7 @@ RunResult Thread::DoAtomicRmwCmpxchg(Instr instr, Trap::Ptr* out_trap) {
   V replace = static_cast<V>(Pop<T>());
   V expect = static_cast<V>(Pop<T>());
   V old;
-  u64 offset = memory->type().limits.is_64 ? Pop<u64>() : Pop<u32>();
+  u64 offset = PopPtr(memory);
   TRAP_IF(Failed(memory->AtomicRmwCmpxchg(offset, instr.imm_u32x2.snd, expect,
                                           replace, &old)),
           StringPrintf("invalid atomic access at %" PRIaddress "+%u", offset,
@@ -2239,7 +2437,6 @@ std::string Thread::TraceSource::Pick(Index index, Instr instr) {
 
     case ValueType::FuncRef:    reftype = "funcref"; break;
     case ValueType::ExternRef:  reftype = "externref"; break;
-    case ValueType::ExnRef:     reftype = "exnref"; break;
 
     default:
       WABT_UNREACHABLE;
