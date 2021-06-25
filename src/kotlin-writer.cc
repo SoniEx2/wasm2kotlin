@@ -260,8 +260,11 @@ class KotlinWriter {
   void Write(const UnaryExpr&);
   void Write(const TernaryExpr&);
   void Write(const SimdLaneOpExpr&);
+  void Write(const SimdLoadLaneExpr&);
+  void Write(const SimdStoreLaneExpr&);
   void Write(const SimdShuffleOpExpr&);
   void Write(const LoadSplatExpr&);
+  void Write(const LoadZeroExpr&);
 
   const WriteKotlinOptions& options_;
   const Module* module_ = nullptr;
@@ -1644,6 +1647,16 @@ void KotlinWriter::Write(const ExprList& exprs) {
         break;
       }
 
+      case ExprType::SimdLoadLane: {
+        Write(*cast<SimdLoadLaneExpr>(&expr));
+        break;
+      }
+
+      case ExprType::SimdStoreLane: {
+        Write(*cast<SimdStoreLaneExpr>(&expr));
+        break;
+      }
+
       case ExprType::SimdShuffleOp: {
         Write(*cast<SimdShuffleOpExpr>(&expr));
         break;
@@ -1651,6 +1664,10 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
       case ExprType::LoadSplat:
         Write(*cast<LoadSplatExpr>(&expr));
+        break;
+
+      case ExprType::LoadZero:
+        Write(*cast<LoadZeroExpr>(&expr));
         break;
 
       case ExprType::Unreachable:
@@ -1664,7 +1681,6 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::AtomicWait:
       case ExprType::AtomicFence:
       case ExprType::AtomicNotify:
-      case ExprType::BrOnExn:
       case ExprType::Rethrow:
       case ExprType::ReturnCall:
       case ExprType::ReturnCallIndirect:
@@ -2193,11 +2209,23 @@ void KotlinWriter::Write(const UnaryExpr& expr) {
       break;
 
     case Opcode::I32Extend8S:
+      WritePostfixUnaryExpr(expr.opcode, ".toByte().toInt()");
+      break;
+
     case Opcode::I32Extend16S:
+      WritePostfixUnaryExpr(expr.opcode, ".toShort().toInt()");
+      break;
+
     case Opcode::I64Extend8S:
+      WritePostfixUnaryExpr(expr.opcode, ".toByte().toLong()");
+      break;
+
     case Opcode::I64Extend16S:
+      WritePostfixUnaryExpr(expr.opcode, ".toShort().toLong()");
+      break;
+
     case Opcode::I64Extend32S:
-      UNIMPLEMENTED(expr.opcode.GetName());
+      WritePostfixUnaryExpr(expr.opcode, ".toInt().toLong()");
       break;
 
     default:
@@ -2256,6 +2284,14 @@ void KotlinWriter::Write(const SimdLaneOpExpr& expr) {
   PushType(result_type);
 }
 
+void KotlinWriter::Write(const SimdLoadLaneExpr& expr) {
+  UNIMPLEMENTED("SIMD support");
+}
+
+void KotlinWriter::Write(const SimdStoreLaneExpr& expr) {
+  UNIMPLEMENTED("SIMD support");
+}
+
 void KotlinWriter::Write(const SimdShuffleOpExpr& expr) {
   Type result_type = expr.opcode.GetResultType();
   Write(StackVar(1, result_type), " = ", expr.opcode.GetName(), "(",
@@ -2278,6 +2314,10 @@ void KotlinWriter::Write(const LoadSplatExpr& expr) {
   Write("));", Newline());
   DropTypes(1);
   PushType(result_type);
+}
+
+void KotlinWriter::Write(const LoadZeroExpr& expr) {
+  UNIMPLEMENTED("SIMD support");
 }
 
 void KotlinWriter::WriteKotlinSource() {

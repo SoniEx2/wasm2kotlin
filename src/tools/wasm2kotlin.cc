@@ -51,10 +51,10 @@ R"(  Read a file in the WebAssembly binary format, and convert it to
 
 examples:
   # parse binary file test.wasm and write test.kt
-  $ wasm2c test.wasm -o test.kt
+  $ wasm2kotlin test.wasm -o test.kt
 
   # parse test.wasm, write test.kt, but ignore the debug names, if any
-  $ wasm2c test.wasm --no-debug-names -o test.kt
+  $ wasm2kotlin test.wasm --no-debug-names -o test.kt
 )";
 
 static void ParseOptions(int argc, char** argv) {
@@ -62,7 +62,7 @@ static void ParseOptions(int argc, char** argv) {
 
   parser.AddOption('v', "verbose", "Use multiple times for more info", []() {
     s_verbose++;
-    s_log_stream = FileStream::CreateStdout();
+    s_log_stream = FileStream::CreateStderr();
   });
   parser.AddOption(
       'o', "output", "FILENAME",
