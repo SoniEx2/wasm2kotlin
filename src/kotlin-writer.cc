@@ -708,11 +708,7 @@ void KotlinWriter::Write(const Const& const_) {
   switch (const_.type()) {
     case Type::I32: {
       int32_t i32_bits = static_cast<int32_t>(const_.u32());
-      if (i32_bits == std::numeric_limits<int32_t>::min()) {
-        Write("(-0x7FFFFFFF - 1)");
-      } else {
-        Writef("%d", i32_bits);
-      }
+      Writef("(%d)", i32_bits);
       break;
     }
 
@@ -738,11 +734,7 @@ void KotlinWriter::Write(const Const& const_) {
         } else {
           Write("Float.fromBits(");
           // Nan.
-          if (f32_bits == Bitcast<uint32_t>(std::numeric_limits<int32_t>::min())) {
-            Write("-0x7FFFFFFF - 1");
-          } else {
-            Writef("%d", f32_bits);
-          }
+          Writef("%d", f32_bits);
           Writef(") /* %snan:0x%06x */", sign, significand);
         }
       } else if (f32_bits == 0x80000000) {
@@ -2093,19 +2085,11 @@ void KotlinWriter::Write(const LoadExpr& expr) {
   assert(module_->memories.size() == 1);
   Memory* memory = module_->memories[0];
 
-  const char* mask;
-  switch (StackType(0)) {
-    case Type::I32: mask = "0xFFFFFFFFL"; break;
-    case Type::I64: mask = "(-1L)"; break;
-    default:
-      WABT_UNREACHABLE;
-  }
-
   Type result_type = expr.opcode.GetResultType();
-  Write(StackVar(0, result_type), " = ", GlobalName(memory->name), ".", func, "(",
-        "(", StackVar(0), ".toLong() and ", mask, ")");
+  Write(StackVar(0, result_type), " = ", GlobalName(memory->name), ".", func,
+        "(", StackVar(0));
   if (expr.offset != 0)
-    Write(" + ", expr.offset, "L");
+    Writef(", %d", static_cast<int32_t>(expr.offset));
   Write(");", Newline());
   DropTypes(1);
   PushType(result_type);
@@ -2131,18 +2115,10 @@ void KotlinWriter::Write(const StoreExpr& expr) {
   assert(module_->memories.size() == 1);
   Memory* memory = module_->memories[0];
 
-  const char* mask;
-  switch (StackType(1)) {
-    case Type::I32: mask = "0xFFFFFFFFL"; break;
-    case Type::I64: mask = "(-1L)"; break;
-    default:
-      WABT_UNREACHABLE;
-  }
-
   Write(GlobalName(memory->name), ".", func, "(",
-        "(", StackVar(1), ".toLong() and ", mask, ")");
+        StackVar(1));
   if (expr.offset != 0)
-    Write(" + ", expr.offset, "L");
+    Writef(", %d", static_cast<int32_t>(expr.offset));
   Write(", ", StackVar(0), ");", Newline());
   DropTypes(2);
 }

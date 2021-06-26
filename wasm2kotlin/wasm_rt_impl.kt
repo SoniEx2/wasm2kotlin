@@ -75,39 +75,67 @@ class Memory(initial_pages: Int, max_pages: Int) {
         }
     }
 
-    private fun intpos(pos: Long): Int {
+    private fun offsetp(pos: Int, offset: Int): Int {
+        val pos = (pos.toLong() and 0xFFFFFFFF) + (offset.toLong() and 0xFFFFFFFF);
         if ((pos and 0xFFFFFFFFL) != pos) {
             throw RangeException()
         }
         return pos.toInt()
     }
 
-    fun i32_store(position: Long, value: Int)    { protect { mem.putInt(intpos(position), value)    } }
-    fun i64_store(position: Long, value: Long)   { protect { mem.putLong(intpos(position), value)   } }
-    fun f32_store(position: Long, value: Float)  { protect { mem.putFloat(intpos(position), value)  } }
-    fun f64_store(position: Long, value: Double) { protect { mem.putDouble(intpos(position), value) } }
+    fun i32_store(position: Int, offset: Int, value: Int)    { protect { mem.putInt(offsetp(position, offset), value)    } }
+    fun i64_store(position: Int, offset: Int, value: Long)   { protect { mem.putLong(offsetp(position, offset), value)   } }
+    fun f32_store(position: Int, offset: Int, value: Float)  { protect { mem.putFloat(offsetp(position, offset), value)  } }
+    fun f64_store(position: Int, offset: Int, value: Double) { protect { mem.putDouble(offsetp(position, offset), value) } }
 
-    fun i32_store8(position: Long, value: Int)   { protect { mem.put(intpos(position), value.toByte())       } }
-    fun i64_store8(position: Long, value: Long)  { protect { mem.put(intpos(position), value.toByte())       } }
-    fun i32_store16(position: Long, value: Int)  { protect { mem.putShort(intpos(position), value.toShort()) } }
-    fun i64_store16(position: Long, value: Long) { protect { mem.putShort(intpos(position), value.toShort()) } }
-    fun i64_store32(position: Long, value: Long) { protect { mem.putInt(intpos(position), value.toInt())     } }
+    fun i32_store8(position: Int, offset: Int, value: Int)   { protect { mem.put(offsetp(position, offset), value.toByte())       } }
+    fun i64_store8(position: Int, offset: Int, value: Long)  { protect { mem.put(offsetp(position, offset), value.toByte())       } }
+    fun i32_store16(position: Int, offset: Int, value: Int)  { protect { mem.putShort(offsetp(position, offset), value.toShort()) } }
+    fun i64_store16(position: Int, offset: Int, value: Long) { protect { mem.putShort(offsetp(position, offset), value.toShort()) } }
+    fun i64_store32(position: Int, offset: Int, value: Long) { protect { mem.putInt(offsetp(position, offset), value.toInt())     } }
 
-    fun i32_load(position: Long): Int    = protect { mem.getInt(intpos(position))    }
-    fun i64_load(position: Long): Long   = protect { mem.getLong(intpos(position))   }
-    fun f32_load(position: Long): Float  = protect { mem.getFloat(intpos(position))  }
-    fun f64_load(position: Long): Double = protect { mem.getDouble(intpos(position)) }
+    fun i32_load(position: Int, offset: Int): Int    = protect { mem.getInt(offsetp(position, offset))    }
+    fun i64_load(position: Int, offset: Int): Long   = protect { mem.getLong(offsetp(position, offset))   }
+    fun f32_load(position: Int, offset: Int): Float  = protect { mem.getFloat(offsetp(position, offset))  }
+    fun f64_load(position: Int, offset: Int): Double = protect { mem.getDouble(offsetp(position, offset)) }
 
-    fun i32_load8_s(position: Long): Int   = protect { mem.get(intpos(position))      }.toInt()
-    fun i64_load8_s(position: Long): Long  = protect { mem.get(intpos(position))      }.toLong() 
-    fun i32_load8_u(position: Long): Int   = protect { mem.get(intpos(position))      }.toInt() and 0xFF
-    fun i64_load8_u(position: Long): Long  = protect { mem.get(intpos(position))      }.toLong() and 0xFFL
-    fun i32_load16_s(position: Long): Int  = protect { mem.getShort(intpos(position)) }.toInt()
-    fun i64_load16_s(position: Long): Long = protect { mem.getShort(intpos(position)) }.toLong()
-    fun i32_load16_u(position: Long): Int  = protect { mem.getShort(intpos(position)) }.toInt() and 0xFFFF
-    fun i64_load16_u(position: Long): Long = protect { mem.getShort(intpos(position)) }.toLong() and 0xFFFFL
-    fun i64_load32_s(position: Long): Long = protect { mem.getInt(intpos(position))   }.toLong()
-    fun i64_load32_u(position: Long): Long = protect { mem.getInt(intpos(position))   }.toLong() and 0xFFFFFFFFL
+    fun i32_load8_s(position: Int, offset: Int): Int   = protect { mem.get(offsetp(position, offset))      }.toInt()
+    fun i64_load8_s(position: Int, offset: Int): Long  = protect { mem.get(offsetp(position, offset))      }.toLong()
+    fun i32_load8_u(position: Int, offset: Int): Int   = protect { mem.get(offsetp(position, offset))      }.toInt() and 0xFF
+    fun i64_load8_u(position: Int, offset: Int): Long  = protect { mem.get(offsetp(position, offset))      }.toLong() and 0xFFL
+    fun i32_load16_s(position: Int, offset: Int): Int  = protect { mem.getShort(offsetp(position, offset)) }.toInt()
+    fun i64_load16_s(position: Int, offset: Int): Long = protect { mem.getShort(offsetp(position, offset)) }.toLong()
+    fun i32_load16_u(position: Int, offset: Int): Int  = protect { mem.getShort(offsetp(position, offset)) }.toInt() and 0xFFFF
+    fun i64_load16_u(position: Int, offset: Int): Long = protect { mem.getShort(offsetp(position, offset)) }.toLong() and 0xFFFFL
+    fun i64_load32_s(position: Int, offset: Int): Long = protect { mem.getInt(offsetp(position, offset))   }.toLong()
+    fun i64_load32_u(position: Int, offset: Int): Long = protect { mem.getInt(offsetp(position, offset))   }.toLong() and 0xFFFFFFFFL
+
+    fun i32_store(position: Int, value: Int)    { protect { mem.putInt(position, value)    } }
+    fun i64_store(position: Int, value: Long)   { protect { mem.putLong(position, value)   } }
+    fun f32_store(position: Int, value: Float)  { protect { mem.putFloat(position, value)  } }
+    fun f64_store(position: Int, value: Double) { protect { mem.putDouble(position, value) } }
+
+    fun i32_store8(position: Int, value: Int)   { protect { mem.put(position, value.toByte())       } }
+    fun i64_store8(position: Int, value: Long)  { protect { mem.put(position, value.toByte())       } }
+    fun i32_store16(position: Int, value: Int)  { protect { mem.putShort(position, value.toShort()) } }
+    fun i64_store16(position: Int, value: Long) { protect { mem.putShort(position, value.toShort()) } }
+    fun i64_store32(position: Int, value: Long) { protect { mem.putInt(position, value.toInt())     } }
+
+    fun i32_load(position: Int): Int    = protect { mem.getInt(position)    }
+    fun i64_load(position: Int): Long   = protect { mem.getLong(position)   }
+    fun f32_load(position: Int): Float  = protect { mem.getFloat(position)  }
+    fun f64_load(position: Int): Double = protect { mem.getDouble(position) }
+
+    fun i32_load8_s(position: Int): Int   = protect { mem.get(position)      }.toInt()
+    fun i64_load8_s(position: Int): Long  = protect { mem.get(position)      }.toLong()
+    fun i32_load8_u(position: Int): Int   = protect { mem.get(position)      }.toInt() and 0xFF
+    fun i64_load8_u(position: Int): Long  = protect { mem.get(position)      }.toLong() and 0xFFL
+    fun i32_load16_s(position: Int): Int  = protect { mem.getShort(position) }.toInt()
+    fun i64_load16_s(position: Int): Long = protect { mem.getShort(position) }.toLong()
+    fun i32_load16_u(position: Int): Int  = protect { mem.getShort(position) }.toInt() and 0xFFFF
+    fun i64_load16_u(position: Int): Long = protect { mem.getShort(position) }.toLong() and 0xFFFFL
+    fun i64_load32_s(position: Int): Long = protect { mem.getInt(position)   }.toLong()
+    fun i64_load32_u(position: Int): Long = protect { mem.getInt(position)   }.toLong() and 0xFFFFFFFFL
 
     // NOTE: Not thread-safe.
     fun resize(new_pages: Int): Int {
