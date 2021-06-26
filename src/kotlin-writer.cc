@@ -107,14 +107,6 @@ struct Newline {};
 struct OpenBrace {};
 struct CloseBrace {};
 
-int GetShiftMask(Type type) {
-  switch (type) {
-    case Type::I32: return 31;
-    case Type::I64: return 63;
-    default: WABT_UNREACHABLE; return 0;
-  }
-}
-
 class KotlinWriter {
  public:
   KotlinWriter(Stream* kotlin_stream,
@@ -1815,22 +1807,22 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
 
     case Opcode::I32Shl:
     case Opcode::I64Shl:
-      Write(StackVar(1), " = (", StackVar(1), " shl (", StackVar(0), ".toInt() and ",
-            GetShiftMask(expr.opcode.GetResultType()), "));", Newline());
+      Write(StackVar(1), " = (", StackVar(1), " shl (", StackVar(0), ".toInt()",
+            "));", Newline());
       DropTypes(1);
       break;
 
     case Opcode::I32ShrS:
     case Opcode::I64ShrS:
-      Write(StackVar(1), " = (", StackVar(1), " shr (", StackVar(0), ".toInt() and ",
-            GetShiftMask(expr.opcode.GetResultType()), "));", Newline());
+      Write(StackVar(1), " = (", StackVar(1), " shr (", StackVar(0), ".toInt()",
+            "));", Newline());
       DropTypes(1);
       break;
 
     case Opcode::I32ShrU:
     case Opcode::I64ShrU:
-      Write(StackVar(1), " = (", StackVar(1), " ushr (", StackVar(0), ".toInt() and ",
-            GetShiftMask(expr.opcode.GetResultType()), "));", Newline());
+      Write(StackVar(1), " = (", StackVar(1), " ushr (", StackVar(0), ".toInt()",
+            "));", Newline());
       DropTypes(1);
       break;
 
