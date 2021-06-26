@@ -1995,14 +1995,29 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
       break;
 
     case Opcode::I32TruncSatF32S:
-    case Opcode::I64TruncSatF32S:
     case Opcode::I32TruncSatF64S:
+      WritePostfixUnaryExpr(expr.opcode, ".toInt()");
+      break;
+
+    case Opcode::I64TruncSatF32S:
     case Opcode::I64TruncSatF64S:
+      WritePostfixUnaryExpr(expr.opcode, ".toLong()");
+      break;
+
     case Opcode::I32TruncSatF32U:
+      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I32_TRUNC_SAT_U_F32");
+      break;
+
     case Opcode::I64TruncSatF32U:
+      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I64_TRUNC_SAT_U_F32");
+      break;
+
     case Opcode::I32TruncSatF64U:
+      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I32_TRUNC_SAT_U_F64");
+      break;
+
     case Opcode::I64TruncSatF64U:
-      UNIMPLEMENTED(expr.opcode.GetName());
+      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I64_TRUNC_SAT_U_F64");
       break;
 
     case Opcode::F32ConvertI32S:

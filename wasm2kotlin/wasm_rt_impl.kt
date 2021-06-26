@@ -332,6 +332,29 @@ fun I64_ROTL(x: Long, y: Long) = (((x) shl ((y.toInt()) and (63))) or ((x) ushr 
 fun I32_ROTR(x: Int , y: Int ) = (((x) ushr ((y) and (31))) or ((x) shl (((31) - (y) + 1) and (31))))
 fun I64_ROTR(x: Long, y: Long) = (((x) ushr ((y.toInt()) and (63))) or ((x) shl (((63) - (y.toInt()) + 1) and (63))))
 
+fun I32_TRUNC_SAT_U_F32(x: Float ): Int  =
+  if (x.isNaN()) { 0 }
+  else if (x <= -1.0f) { 0 }
+  else if (x >= 4294967296f) { -1 }
+  else { x.toLong().toInt() }
+fun I64_TRUNC_SAT_U_F32(x: Float ): Long =
+  if (x.isNaN()) { 0L }
+  else if (x <= -1.0f) { 0L }
+  else if (x >= 18446744073709551616f) { -1L }
+  else if (x < Long.MAX_VALUE.toFloat()) { x.toLong() }
+  else { (x - Long.MAX_VALUE.toFloat()).toLong() + Long.MIN_VALUE }
+fun I32_TRUNC_SAT_U_F64(x: Double): Int  =
+  if (x.isNaN()) { 0 }
+  else if (x <= -1.0) { 0 }
+  else if (x >= 4294967296.0) { -1 }
+  else { x.toLong().toInt() }
+fun I64_TRUNC_SAT_U_F64(x: Double): Long =
+  if (x.isNaN()) { 0L }
+  else if (x <= -1.0) { 0L }
+  else if (x >= 18446744073709551616.0) { -1L }
+  else if (x < Long.MAX_VALUE.toDouble()) { x.toLong() }
+  else { (x - Long.MAX_VALUE.toDouble()).toLong() + Long.MIN_VALUE }
+
 fun I32_TRUNC_S_F32(x: Float ): Int  =
   if (x.isNaN()) { throw InvalidConversionException() }
   else if (!(x >= Int.MIN_VALUE.toFloat() && x < 2147483648f)) { throw IntOverflowException() }
