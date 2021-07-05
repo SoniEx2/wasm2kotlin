@@ -51,7 +51,7 @@ struct Label {
         used(used) {}
 
   bool HasValue() const {
-    return label_type != LabelType::Loop && !sig.empty();
+    return !sig.empty();
   }
 
   LabelType label_type;
@@ -93,6 +93,13 @@ struct StackVar {
   Type type;
 };
 
+struct StackVarConst {
+  explicit StackVarConst(Index index, Type type = Type::Any)
+      : index(index), type(type) {}
+  Index index;
+  Type type;
+};
+
 struct TypeEnum {
   explicit TypeEnum(Type type) : type(type) {}
   Type type;
@@ -127,6 +134,7 @@ class KotlinWriter {
   typedef std::map<std::string, ExternalKind> ExtKindMap;
   typedef std::pair<Index, Type> StackTypePair;
   typedef std::map<StackTypePair, std::string> StackVarSymbolMap;
+  typedef std::map<Index, Const> StackVarConstMap;
 
   void UseStream(Stream*);
 
@@ -138,6 +146,9 @@ class KotlinWriter {
   void PushType(Type);
   void PushTypes(const TypeVector&);
   void DropTypes(size_t count);
+  void PushConst(Const);
+  Const PopConst();
+  bool IsConst(Index index);
 
   void PushLabel(LabelType,
                  const std::string& name,
@@ -203,6 +214,7 @@ class KotlinWriter {
   void Write(const LabelDecl&);
   void Write(const GlobalVar&);
   void Write(const StackVar&);
+  void Write(const StackVarConst&);
   void Write(const ResultType&);
   void Write(const Const&);
   void WriteInitExpr(const ExprList&);
@@ -282,6 +294,7 @@ class KotlinWriter {
   SymbolSet module_import_syms_;
   TypeVector type_stack_;
   std::vector<Label> label_stack_;
+  StackVarConstMap const_stack_;
 };
 
 static const char kImplicitFuncLabel[] = "$Bfunc";
@@ -297,6 +310,8 @@ size_t KotlinWriter::MarkTypeStack() const {
 void KotlinWriter::ResetTypeStack(size_t mark) {
   assert(mark <= type_stack_.size());
   type_stack_.erase(type_stack_.begin() + mark, type_stack_.end());
+  auto it = const_stack_.lower_bound(type_stack_.size());
+  if (it != const_stack_.end()) const_stack_.erase(it, const_stack_.end());
 }
 
 Type KotlinWriter::StackType(Index index) const {
@@ -315,20 +330,51 @@ void KotlinWriter::PushTypes(const TypeVector& types) {
 void KotlinWriter::DropTypes(size_t count) {
   assert(count <= type_stack_.size());
   type_stack_.erase(type_stack_.end() - count, type_stack_.end());
+  auto it = const_stack_.lower_bound(type_stack_.size());
+  if (it != const_stack_.end()) const_stack_.erase(it, const_stack_.end());
+}
+
+void KotlinWriter::PushConst(Const const_) {
+  Index index = type_stack_.size() - 1;
+  Type type = type_stack_[index];
+  assert(const_.type() == type);
+  const_stack_.insert(StackVarConstMap::value_type(index, const_));
+}
+
+Const KotlinWriter::PopConst() {
+  Index index = type_stack_.size() - 1;
+  auto iter = const_stack_.find(index);
+  assert(iter != const_stack_.end());
+  Const result = iter->second;
+  const_stack_.erase(iter);
+  return result;
+}
+
+bool KotlinWriter::IsConst(Index index) {
+  if (index >= type_stack_.size()) {
+    return false;
+  }
+  index = type_stack_.size() - 1 - index;
+  auto iter = const_stack_.find(index);
+  return iter != const_stack_.end();
 }
 
 void KotlinWriter::PushLabel(LabelType label_type,
                         const std::string& name,
                         const FuncSignature& sig,
                         bool used) {
-  // TODO(binji): Add multi-value support.
+  // TODO(Soni): Add multi-value support.
   if ((label_type != LabelType::Func && sig.GetNumParams() != 0) ||
       sig.GetNumResults() > 1) {
     UNIMPLEMENTED("multi value support");
   }
 
-  label_stack_.emplace_back(label_type, name, sig.result_types,
-                            type_stack_.size(), used);
+  if (label_type == LabelType::Loop)
+    label_stack_.emplace_back(label_type, name, sig.param_types,
+                              type_stack_.size(), used);
+  else
+    label_stack_.emplace_back(label_type, name, sig.result_types,
+                              type_stack_.size(), used);
 }
 
 const Label* KotlinWriter::FindLabel(const Var& var) {
@@ -615,8 +661,9 @@ void KotlinWriter::Write(const GotoLabel& goto_label) {
     assert(label->sig.size() == 1);
     assert(type_stack_.size() >= label->type_stack_size);
     Index dst = type_stack_.size() - label->type_stack_size - 1;
-    if (dst != 0)
-      Write(StackVar(dst, label->sig[0]), " = ", StackVar(0), "; ");
+    if (dst != 0 || IsConst(0)) {
+      Write(StackVar(dst, label->sig[0]), " = ", StackVarConst(0), "; ");
+    }
   }
 
   if (goto_label.var.is_name()) {
@@ -662,6 +709,23 @@ void KotlinWriter::Write(const StackVar& sv) {
     std::string name = MangleType(type) + std::to_string(index);
     Write(DefineStackVarName(index, type, name));
   } else {
+    Write(iter->second);
+  }
+}
+
+void KotlinWriter::Write(const StackVarConst& svc) {
+  Index index = type_stack_.size() - 1 - svc.index;
+  Type type = svc.type;
+
+  auto iter = const_stack_.find(index);
+  if (iter == const_stack_.end()) {
+    Write(StackVar(svc.index, svc.type));
+  } else {
+    if (type == Type::Any) {
+      assert(index < type_stack_.size());
+      type = type_stack_[index];
+    }
+    assert(type == iter->second.type());
     Write(iter->second);
   }
 }
@@ -1267,6 +1331,10 @@ void KotlinWriter::Write(const Func& func) {
   PushLabel(LabelType::Func, empty, func.decl.sig);
   Write(LabelDecl(label), "do ", OpenBrace());
   Write(func.exprs);
+  if (func.GetNumResults() > 0 && IsConst(0)) {
+    Const const_ = PopConst();
+    Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+  }
   Write(CloseBrace(), " while (false);", Newline());
   PopLabel();
   ResetTypeStack(0);
@@ -1377,6 +1445,10 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Write(LabelDecl(label));
         Write("do ", OpenBrace());
         Write(block.exprs);
+        if (block.decl.GetNumResults() > 0 && IsConst(0)) {
+          Const const_ = PopConst();
+          Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+        }
         Write(CloseBrace(), " while (false);", Newline());
         ResetTypeStack(mark);
         PopLabel();
@@ -1390,14 +1462,14 @@ void KotlinWriter::Write(const ExprList& exprs) {
         return;
 
       case ExprType::BrIf:
-        Write("if (", StackVar(0), ".inz()) {");
+        Write("if (", StackVarConst(0), ".inz()) {");
         DropTypes(1);
         Write(GotoLabel(cast<BrIfExpr>(&expr)->var), "}", Newline());
         break;
 
       case ExprType::BrTable: {
         const auto* bt_expr = cast<BrTableExpr>(&expr);
-        Write("when (", StackVar(0), ") ", OpenBrace());
+        Write("when (", StackVarConst(0), ") ", OpenBrace());
         DropTypes(1);
         Index i = 0;
         for (const Var& var : bt_expr->targets) {
@@ -1426,7 +1498,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
           if (i != 0) {
             Write(", ");
           }
-          Write(StackVar(num_params - i - 1));
+          Write(StackVarConst(num_params - i - 1));
         }
         Write(");", Newline());
         DropTypes(num_params);
@@ -1453,9 +1525,9 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Write("wasm_rt_impl.CALL_INDIRECT<");
         WriteFuncType(decl);
         Write(">(", GetGlobalName(table->name), ", func_types[");
-        Write(func_type_index, "], ", StackVar(0), ")(");
+        Write(func_type_index, "], ", StackVarConst(0), ")(");
         for (Index i = 0; i < num_params; ++i) {
-          Write(StackVar(num_params - i), ", ");
+          Write(StackVarConst(num_params - i), ", ");
         }
         Write(");", Newline());
         DropTypes(num_params + 1);
@@ -1470,7 +1542,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::Const: {
         const Const& const_ = cast<ConstExpr>(&expr)->const_;
         PushType(const_.type());
-        Write(StackVar(0), " = ", const_, ";", Newline());
+        PushConst(const_);
         break;
       }
 
@@ -1491,7 +1563,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
       case ExprType::GlobalSet: {
         const Var& var = cast<GlobalSetExpr>(&expr)->var;
-        Write(GlobalVar(var), " = ", StackVar(0), ";", Newline());
+        Write(GlobalVar(var), " = ", StackVarConst(0), ";", Newline());
         DropTypes(1);
         break;
       }
@@ -1500,15 +1572,25 @@ void KotlinWriter::Write(const ExprList& exprs) {
         const IfExpr& if_ = *cast<IfExpr>(&expr);
         std::string label = DefineLocalScopeName(if_.true_.label);
         Write(LabelDecl(label), "do ", OpenBrace());
-        Write("if (", StackVar(0), ".inz()) ", OpenBrace());
+        Write("if (", StackVarConst(0), ".inz()) ", OpenBrace());
         DropTypes(1);
         size_t mark = MarkTypeStack();
         PushLabel(LabelType::If, if_.true_.label, if_.true_.decl.sig);
-        Write(if_.true_.exprs, CloseBrace());
+        Write(if_.true_.exprs);
         if (!if_.false_.empty()) {
+          if (if_.true_.decl.GetNumResults() > 0 && IsConst(0)) {
+            Const const_ = PopConst();
+            Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+          }
+          Write(CloseBrace());
           ResetTypeStack(mark);
-          Write(" else ", OpenBrace(), if_.false_, CloseBrace());
+          Write(" else ", OpenBrace(), if_.false_);
         }
+        if (if_.true_.decl.GetNumResults() > 0 && IsConst(0)) {
+          Const const_ = PopConst();
+          Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+        }
+        Write(CloseBrace());
         Write(CloseBrace(), " while (false);");
         ResetTypeStack(mark);
         Write(Newline());
@@ -1530,14 +1612,14 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
       case ExprType::LocalSet: {
         const Var& var = cast<LocalSetExpr>(&expr)->var;
-        Write(var, " = ", StackVar(0), ";", Newline());
+        Write(var, " = ", StackVarConst(0), ";", Newline());
         DropTypes(1);
         break;
       }
 
       case ExprType::LocalTee: {
         const Var& var = cast<LocalTeeExpr>(&expr)->var;
-        Write(var, " = ", StackVar(0), ";", Newline());
+        Write(var, " = ", StackVarConst(0), ";", Newline());
         break;
       }
 
@@ -1549,6 +1631,10 @@ void KotlinWriter::Write(const ExprList& exprs) {
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
           Write(block.exprs);
+          if (block.decl.GetNumResults() > 0 && IsConst(0)) {
+            Const const_ = PopConst();
+            Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+          }
           ResetTypeStack(mark);
           PopLabel();
           PushTypes(block.decl.sig.result_types);
@@ -1580,8 +1666,11 @@ void KotlinWriter::Write(const ExprList& exprs) {
         assert(module_->memories.size() == 1);
         Memory* memory = module_->memories[0];
 
-        Write(StackVar(0), " = wasm_rt_impl.grow_memory(", ExternalPtr(memory->name),
-              ", ", StackVar(0), ");", Newline());
+        assert(StackType(0) == Type::I32);
+        Write(StackVar(0, Type::I32), " = wasm_rt_impl.grow_memory(", ExternalPtr(memory->name),
+              ", ", StackVarConst(0), ");", Newline());
+        DropTypes(1);
+        PushType(Type::I32);
         break;
       }
 
@@ -1607,8 +1696,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
       case ExprType::Select: {
         Type type = StackType(1);
-        Write(StackVar(2), " = if (", StackVar(0), ".inz()) ", StackVar(2), " else ",
-              StackVar(1), ";", Newline());
+        Write(StackVar(2), " = if (", StackVarConst(0), ".inz()) ", StackVarConst(2), " else ",
+              StackVarConst(1), ";", Newline());
         DropTypes(3);
         PushType(type);
         break;
@@ -1678,14 +1767,14 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
 void KotlinWriter::WriteSimpleUnaryExpr(Opcode opcode, const char* op) {
   Type result_type = opcode.GetResultType();
-  Write(StackVar(0, result_type), " = ", op, "(", StackVar(0), ");", Newline());
+  Write(StackVar(0, result_type), " = ", op, "(", StackVarConst(0), ");", Newline());
   DropTypes(1);
   PushType(opcode.GetResultType());
 }
 
 void KotlinWriter::WritePostfixUnaryExpr(Opcode opcode, const char* op) {
   Type result_type = opcode.GetResultType();
-  Write(StackVar(0, result_type), " = (", StackVar(0), ")", op, ";", Newline());
+  Write(StackVar(0, result_type), " = (", StackVarConst(0), ")", op, ";", Newline());
   DropTypes(1);
   PushType(opcode.GetResultType());
 }
@@ -1696,10 +1785,10 @@ void KotlinWriter::WriteInfixBinaryExpr(Opcode opcode,
                                    bool debooleanize) {
   Type result_type = opcode.GetResultType();
   Write(StackVar(1, result_type));
-  if (assign_op == AssignOp::Allowed) {
-    Write(" ", op, "= ", StackVar(0));
+  if (assign_op == AssignOp::Allowed && !IsConst(1)) {
+    Write(" ", op, "= ", StackVarConst(0));
   } else {
-    Write(" = (", StackVar(1), " ", op, " ", StackVar(0), ")");
+    Write(" = (", StackVarConst(1), " ", op, " ", StackVarConst(0), ")");
   }
   if (debooleanize) {
     Write(".bto", result_type, "()");
@@ -1711,8 +1800,8 @@ void KotlinWriter::WriteInfixBinaryExpr(Opcode opcode,
 
 void KotlinWriter::WritePrefixBinaryExpr(Opcode opcode, const char* op) {
   Type result_type = opcode.GetResultType();
-  Write(StackVar(1, result_type), " = ", op, "(", StackVar(1), ", ",
-        StackVar(0), ");", Newline());
+  Write(StackVar(1, result_type), " = ", op, "(", StackVarConst(1), ", ",
+        StackVarConst(0), ");", Newline());
   DropTypes(2);
   PushType(result_type);
 }
@@ -1730,7 +1819,7 @@ void KotlinWriter::WriteUnsignedCompareExpr(Opcode opcode, const char* op) {
     cls = "java.lang.Long";
   }
   Write(StackVar(1, result_type), " = (", cls, ".compareUnsigned(",
-        StackVar(1), ", ", StackVar(0), ")", op, "0).bto", result_type, "();",
+        StackVarConst(1), ", ", StackVarConst(0), ")", op, "0).bto", result_type, "();",
         Newline());
   DropTypes(2);
   PushType(result_type);
@@ -1807,21 +1896,21 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
 
     case Opcode::I32Shl:
     case Opcode::I64Shl:
-      Write(StackVar(1), " = (", StackVar(1), " shl (", StackVar(0), ".toInt()",
+      Write(StackVar(1), " = (", StackVarConst(1), " shl (", StackVarConst(0), ".toInt()",
             "));", Newline());
       DropTypes(1);
       break;
 
     case Opcode::I32ShrS:
     case Opcode::I64ShrS:
-      Write(StackVar(1), " = (", StackVar(1), " shr (", StackVar(0), ".toInt()",
+      Write(StackVar(1), " = (", StackVarConst(1), " shr (", StackVarConst(0), ".toInt()",
             "));", Newline());
       DropTypes(1);
       break;
 
     case Opcode::I32ShrU:
     case Opcode::I64ShrU:
-      Write(StackVar(1), " = (", StackVar(1), " ushr (", StackVar(0), ".toInt()",
+      Write(StackVar(1), " = (", StackVarConst(1), " ushr (", StackVarConst(0), ".toInt()",
             "));", Newline());
       DropTypes(1);
       break;
@@ -1936,7 +2025,7 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
     case Opcode::I32Eqz:
     case Opcode::I64Eqz: {
         Type result_type = expr.opcode.GetResultType();
-        Write(StackVar(0, result_type), " = (", StackVar(0), ").isz().bto", result_type,"();", Newline());
+        Write(StackVar(0, result_type), " = (", StackVarConst(0), ").isz().bto", result_type,"();", Newline());
         DropTypes(1);
         PushType(expr.opcode.GetResultType());
       }
@@ -2094,7 +2183,7 @@ void KotlinWriter::Write(const LoadExpr& expr) {
 
   Type result_type = expr.opcode.GetResultType();
   Write(StackVar(0, result_type), " = ", GlobalName(memory->name), ".", func,
-        "(", StackVar(0));
+        "(", StackVarConst(0));
   if (expr.offset != 0)
     Writef(", %d", static_cast<int32_t>(expr.offset));
   Write(");", Newline());
@@ -2123,10 +2212,10 @@ void KotlinWriter::Write(const StoreExpr& expr) {
   Memory* memory = module_->memories[0];
 
   Write(GlobalName(memory->name), ".", func, "(",
-        StackVar(1));
+        StackVarConst(1));
   if (expr.offset != 0)
     Writef(", %d", static_cast<int32_t>(expr.offset));
-  Write(", ", StackVar(0), ");", Newline());
+  Write(", ", StackVarConst(0), ");", Newline());
   DropTypes(2);
 }
 
@@ -2220,8 +2309,8 @@ void KotlinWriter::Write(const TernaryExpr& expr) {
   switch (expr.opcode) {
     case Opcode::V128BitSelect: {
       Type result_type = expr.opcode.GetResultType();
-      Write(StackVar(2, result_type), " = ", "v128.bitselect", "(", StackVar(0),
-            ", ", StackVar(1), ", ", StackVar(2), ");", Newline());
+      Write(StackVar(2, result_type), " = ", "v128.bitselect", "(", StackVarConst(0),
+            ", ", StackVarConst(1), ", ", StackVarConst(2), ");", Newline());
       DropTypes(3);
       PushType(result_type);
       break;
@@ -2244,7 +2333,7 @@ void KotlinWriter::Write(const SimdLaneOpExpr& expr) {
     case Opcode::F32X4ExtractLane:
     case Opcode::F64X2ExtractLane: {
       Write(StackVar(0, result_type), " = ", expr.opcode.GetName(), "(",
-            StackVar(0), ", lane Imm: ", expr.val, ");", Newline());
+            StackVarConst(0), ", lane Imm: ", expr.val, ");", Newline());
       DropTypes(1);
       break;
     }
@@ -2255,7 +2344,7 @@ void KotlinWriter::Write(const SimdLaneOpExpr& expr) {
     case Opcode::F32X4ReplaceLane:
     case Opcode::F64X2ReplaceLane: {
       Write(StackVar(1, result_type), " = ", expr.opcode.GetName(), "(",
-            StackVar(0), ", ", StackVar(1), ", lane Imm: ", expr.val, ");",
+            StackVarConst(0), ", ", StackVarConst(1), ", lane Imm: ", expr.val, ");",
             Newline());
       DropTypes(2);
       break;
@@ -2278,7 +2367,7 @@ void KotlinWriter::Write(const SimdStoreLaneExpr& expr) {
 void KotlinWriter::Write(const SimdShuffleOpExpr& expr) {
   Type result_type = expr.opcode.GetResultType();
   Write(StackVar(1, result_type), " = ", expr.opcode.GetName(), "(",
-        StackVar(1), " ", StackVar(0), ", lane Imm: $0x%08x %08x %08x %08x",
+        StackVarConst(1), " ", StackVarConst(0), ", lane Imm: $0x%08x %08x %08x %08x",
         expr.val.u32(0), expr.val.u32(1), expr.val.u32(2), expr.val.u32(3), ")",
         Newline());
   DropTypes(2);
@@ -2291,7 +2380,7 @@ void KotlinWriter::Write(const LoadSplatExpr& expr) {
 
   Type result_type = expr.opcode.GetResultType();
   Write(StackVar(0, result_type), " = ", expr.opcode.GetName(), "(",
-        ExternalPtr(memory->name), ", (long)(", StackVar(0));
+        ExternalPtr(memory->name), ", (long)(", StackVarConst(0));
   if (expr.offset != 0)
     Write(" + ", expr.offset);
   Write("));", Newline());
