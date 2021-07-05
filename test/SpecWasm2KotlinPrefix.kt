@@ -12,7 +12,7 @@ fun error(message: String, exception: Throwable) {
     exception.printStackTrace()
 }
 
-inline fun <T> ASSERT_TRAP(f: () -> T, name: String) {
+fun <T> ASSERT_TRAP(f: () -> T, name: String) {
     g_tests_run++
     try {
         f()
@@ -22,7 +22,7 @@ inline fun <T> ASSERT_TRAP(f: () -> T, name: String) {
     }
 }
 
-inline fun <T> ASSERT_EXHAUSTION(f: () -> T, name: String) {
+fun <T> ASSERT_EXHAUSTION(f: () -> T, name: String) {
     g_tests_run++
     try {
         f()
@@ -34,7 +34,7 @@ inline fun <T> ASSERT_EXHAUSTION(f: () -> T, name: String) {
     }
 }
 
-inline fun <T> ASSERT_RETURN(f: () -> T, name: String) {
+fun <T> ASSERT_RETURN(f: () -> T, name: String) {
     g_tests_run++
     try {
         f()
@@ -74,15 +74,15 @@ inline fun <T> ASSERT_RETURN_NAN_T(f: () -> T, is_nan_kind: (T) -> Boolean, name
 }
 
 
-inline fun ASSERT_RETURN_I32(f: () -> Int, expected: Int, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_u32, name)
-inline fun ASSERT_RETURN_I64(f: () -> Long, expected: Long, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_u64, name)
-inline fun ASSERT_RETURN_F32(f: () -> Float, expected: Float, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_f32, name)
-inline fun ASSERT_RETURN_F64(f: () -> Double, expected: Double, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_f64, name)
+fun ASSERT_RETURN_I32(f: () -> Int, expected: Int, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_u32, name)
+fun ASSERT_RETURN_I64(f: () -> Long, expected: Long, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_u64, name)
+fun ASSERT_RETURN_F32(f: () -> Float, expected: Float, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_f32, name)
+fun ASSERT_RETURN_F64(f: () -> Double, expected: Double, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_f64, name)
 
-inline fun ASSERT_RETURN_CANONICAL_NAN_F32(f: () -> Float, name: String) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f32, name, "canonical")
-inline fun ASSERT_RETURN_CANONICAL_NAN_F64(f: () -> Double, name: String) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f64, name, "canonical")
-inline fun ASSERT_RETURN_ARITHMETIC_NAN_F32(f: () -> Float, name: String) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f32, name, "arithmetic")
-inline fun ASSERT_RETURN_ARITHMETIC_NAN_F64(f: () -> Double, name: String) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f64, name, "arithmetic")
+fun ASSERT_RETURN_CANONICAL_NAN_F32(f: () -> Float, name: String) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f32, name, "canonical")
+fun ASSERT_RETURN_CANONICAL_NAN_F64(f: () -> Double, name: String) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f64, name, "canonical")
+fun ASSERT_RETURN_ARITHMETIC_NAN_F32(f: () -> Float, name: String) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f32, name, "arithmetic")
+fun ASSERT_RETURN_ARITHMETIC_NAN_F64(f: () -> Double, name: String) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f64, name, "arithmetic")
 
 fun is_equal_u32(x: Int, y: Int): Boolean = x == y
 fun is_equal_u64(x: Long, y: Long): Boolean = x == y
@@ -174,10 +174,6 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
 
 // workaround for run_spec_tests being MethodTooLarge
 fun <R> runNoInline(f: () -> R): R = run { f() }
-
-fun <T> run_test(fn: () -> T, mod: Z_spectest): T = fn()
-
-fun <T> run_test(fn: (Z_spectest) -> T, mod: Z_spectest): T = fn(mod)
 
 fun main(args: Array<String>) {
     val moduleRegistry = wasm_rt_impl.ModuleRegistry()
