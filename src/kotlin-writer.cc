@@ -764,7 +764,11 @@ void KotlinWriter::Write(const Const& const_) {
   switch (const_.type()) {
     case Type::I32: {
       int32_t i32_bits = static_cast<int32_t>(const_.u32());
-      Writef("(%d)", i32_bits);
+      if (i32_bits < 0) {
+        Writef("(%d)", i32_bits);
+      } else {
+        Writef("%d", i32_bits);
+      }
       break;
     }
 
