@@ -93,8 +93,8 @@ struct StackVar {
   Type type;
 };
 
-struct StackVarConst {
-  explicit StackVarConst(Index index, Type type = Type::Any)
+struct StackVarValue {
+  explicit StackVarValue(Index index, Type type = Type::Any)
       : index(index), type(type) {}
   Index index;
   Type type;
@@ -113,6 +113,14 @@ struct ResultType {
 struct Newline {};
 struct OpenBrace {};
 struct CloseBrace {};
+
+struct StackValue {
+  std::string value;
+  std::set<std::string> depends_locals;
+  std::set<std::string> depends_globals;
+  bool depends_memory = false;
+  uint8_t precedence = 0;
+};
 
 class KotlinWriter {
  public:
@@ -134,7 +142,6 @@ class KotlinWriter {
   typedef std::map<std::string, ExternalKind> ExtKindMap;
   typedef std::pair<Index, Type> StackTypePair;
   typedef std::map<StackTypePair, std::string> StackVarSymbolMap;
-  typedef std::map<Index, Const> StackVarConstMap;
 
   void UseStream(Stream*);
 
@@ -146,9 +153,15 @@ class KotlinWriter {
   void PushType(Type);
   void PushTypes(const TypeVector&);
   void DropTypes(size_t count);
-  void PushConst(Const);
-  Const PopConst();
-  bool IsConst(Index index);
+  void PushValue(StackValue);
+  void PushVar();
+  StackValue PopValue();
+  void DropValue();
+  void SpillValues(size_t preserve,
+                   const SymbolSet& depends_locals,
+                   const SymbolSet& depends_globals,
+                   bool depends_memory,
+                   bool is_block = false);
 
   void PushLabel(LabelType,
                  const std::string& name,
@@ -188,6 +201,25 @@ class KotlinWriter {
   void WriteData(const void* src, size_t size);
   void Writef(const char* format, ...);
 
+  void WriteValueData(const void* src, size_t size);
+  void WriteValuef(const char* format, ...);
+
+  template <typename T, typename U, typename... Args>
+  void WriteValue(T&& t, U&& u, Args&&... args) {
+    WriteValue(std::forward<T>(t));
+    WriteValue(std::forward<U>(u));
+    WriteValue(std::forward<Args>(args)...);
+  }
+  
+  void WriteValue() {}
+  void WriteValue(string_view);
+  void WriteValue(const Const&);
+  void WriteValue(const GlobalVar&);
+  void WriteValue(const Var&);
+  void WriteValue(const LocalName&);
+  void WriteValue(const GlobalName&);
+  void WriteValue(Type);
+
   template <typename T, typename U, typename... Args>
   void Write(T&& t, U&& u, Args&&... args) {
     Write(std::forward<T>(t));
@@ -214,7 +246,6 @@ class KotlinWriter {
   void Write(const LabelDecl&);
   void Write(const GlobalVar&);
   void Write(const StackVar&);
-  void Write(const StackVarConst&);
   void Write(const ResultType&);
   void Write(const Const&);
   void WriteInitExpr(const ExprList&);
@@ -243,16 +274,11 @@ class KotlinWriter {
   void WriteStackVarDeclarations();
   void Write(const ExprList&);
 
-  enum class AssignOp {
-    Disallowed,
-    Allowed,
-  };
-
-  void WriteSimpleUnaryExpr(Opcode, const char* op);
-  void WritePostfixUnaryExpr(Opcode, const char* op);
+  void WriteSimpleUnaryExpr(Type, const char* op);
+  void WritePostfixUnaryExpr(Type, const char* op);
   void WriteInfixBinaryExpr(Opcode,
                             const char* op,
-                            AssignOp = AssignOp::Allowed,
+                            uint8_t precedence,
                             bool = false);
   void WritePrefixBinaryExpr(Opcode, const char* op);
   void WriteUnsignedCompareExpr(Opcode, const char* op);
@@ -294,7 +320,7 @@ class KotlinWriter {
   SymbolSet module_import_syms_;
   TypeVector type_stack_;
   std::vector<Label> label_stack_;
-  StackVarConstMap const_stack_;
+  std::vector<StackValue> value_stack_;
 };
 
 static const char kImplicitFuncLabel[] = "$Bfunc";
@@ -310,8 +336,7 @@ size_t KotlinWriter::MarkTypeStack() const {
 void KotlinWriter::ResetTypeStack(size_t mark) {
   assert(mark <= type_stack_.size());
   type_stack_.erase(type_stack_.begin() + mark, type_stack_.end());
-  auto it = const_stack_.lower_bound(type_stack_.size());
-  if (it != const_stack_.end()) const_stack_.erase(it, const_stack_.end());
+  assert(value_stack_.size() == type_stack_.size());
 }
 
 Type KotlinWriter::StackType(Index index) const {
@@ -330,33 +355,86 @@ void KotlinWriter::PushTypes(const TypeVector& types) {
 void KotlinWriter::DropTypes(size_t count) {
   assert(count <= type_stack_.size());
   type_stack_.erase(type_stack_.end() - count, type_stack_.end());
-  auto it = const_stack_.lower_bound(type_stack_.size());
-  if (it != const_stack_.end()) const_stack_.erase(it, const_stack_.end());
+  assert(value_stack_.size() == type_stack_.size());
 }
 
-void KotlinWriter::PushConst(Const const_) {
-  Index index = type_stack_.size() - 1;
-  Type type = type_stack_[index];
-  assert(const_.type() == type);
-  const_stack_.insert(StackVarConstMap::value_type(index, const_));
+void KotlinWriter::PushValue(StackValue value) {
+  value_stack_.push_back(value);
 }
 
-Const KotlinWriter::PopConst() {
-  Index index = type_stack_.size() - 1;
-  auto iter = const_stack_.find(index);
-  assert(iter != const_stack_.end());
-  Const result = iter->second;
-  const_stack_.erase(iter);
-  return result;
-}
-
-bool KotlinWriter::IsConst(Index index) {
-  if (index >= type_stack_.size()) {
-    return false;
+void KotlinWriter::PushVar() {
+  assert(type_stack_.size() > value_stack_.size());
+  StackValue value;
+  Type type = type_stack_[value_stack_.size()];
+  StackTypePair stp = {value_stack_.size(), type};
+  auto iter = stack_var_sym_map_.find(stp);
+  if (iter == stack_var_sym_map_.end()) {
+    std::string name = MangleType(type) + std::to_string(value_stack_.size());
+    value.value = DefineStackVarName(value_stack_.size(), type, name);
+  } else {
+    value.value = iter->second;
   }
-  index = type_stack_.size() - 1 - index;
-  auto iter = const_stack_.find(index);
-  return iter != const_stack_.end();
+  value.precedence = 0;
+  value.depends_memory = false;
+  value_stack_.push_back(value);
+}
+
+
+StackValue KotlinWriter::PopValue() {
+  assert(!value_stack_.empty());
+  StackValue ret = value_stack_.back();
+  value_stack_.pop_back();
+  return ret;
+}
+
+void KotlinWriter::SpillValues(size_t preserve_count,
+                   const SymbolSet& depends_locals,
+                   const SymbolSet& depends_globals,
+                   bool depends_memory,
+                   bool is_block) {
+  // function calls will pass depends_locals=empty, depends_globals=global_sym_map_, depends_memory=true
+  // memory writes will pass depends_locals=empty, depends_globals=empty, depends_memory=true
+  // global writes will pass depends_locals=empty, depends_globals=the_global, depends_memory=false
+  // local writes will pass depends_locals=the_local, depends_globals=empty, depends_memory=false
+  // globals are thread-local, locals are scope-local, so this is "safe"
+  // preserve_count values will be preserved
+  assert(depends_locals.size() <= 1 || depends_locals == local_syms_);
+  assert(depends_globals.size() <= 1 || depends_globals == global_syms_);
+  assert(value_stack_.size() == type_stack_.size());
+  assert(preserve_count <= value_stack_.size());
+  Index max = value_stack_.size() - preserve_count;
+  bool all_globals = depends_globals == global_syms_;
+  bool all_locals = depends_locals == local_syms_;
+  for (Index i = 0; i < max; ++i) {
+    StackValue& value = value_stack_[i];
+    if (value.precedence == 0) {
+      continue;
+    }
+    bool do_spill = is_block
+                    || (depends_memory && value.depends_memory)
+                    || (all_globals && !value.depends_globals.empty())
+                    || (all_locals && !value.depends_locals.empty())
+                    || (!depends_locals.empty() && value.depends_locals.find(*depends_locals.begin()) != value.depends_locals.end())
+                    || (!depends_globals.empty() && value.depends_globals.find(*depends_globals.begin()) != value.depends_globals.end());
+    if (do_spill) {
+      std::string thing;
+      Type type = type_stack_[i];
+      StackTypePair stp = {i, type};
+      auto iter = stack_var_sym_map_.find(stp);
+      if (iter == stack_var_sym_map_.end()) {
+        std::string name = MangleType(type) + std::to_string(i);
+        thing = DefineStackVarName(i, type, name);
+      } else {
+        thing = iter->second;
+      }
+      std::swap(value.value, thing);
+      value.depends_locals.clear();
+      value.depends_globals.clear();
+      value.depends_memory = false;
+      value.precedence = 0;
+      Write(value.value, " = ", thing, ";", Newline());
+    }
+  }
 }
 
 void KotlinWriter::PushLabel(LabelType label_type,
@@ -586,6 +664,12 @@ void KotlinWriter::WriteIndent() {
   }
 }
 
+void KotlinWriter::WriteValueData(const void* src, size_t size) {
+  assert(!value_stack_.empty());
+  value_stack_.back().value.append(static_cast<const char*>(src), size);
+}
+
+
 void KotlinWriter::WriteData(const void* src, size_t size) {
   if (should_write_indent_next_) {
     WriteIndent();
@@ -597,6 +681,11 @@ void KotlinWriter::WriteData(const void* src, size_t size) {
 void WABT_PRINTF_FORMAT(2, 3) KotlinWriter::Writef(const char* format, ...) {
   WABT_SNPRINTF_ALLOCA(buffer, length, format);
   WriteData(buffer, length);
+}
+
+void WABT_PRINTF_FORMAT(2, 3) KotlinWriter::WriteValuef(const char* format, ...) {
+  WABT_SNPRINTF_ALLOCA(buffer, length, format);
+  WriteValueData(buffer, length);
 }
 
 void KotlinWriter::Write(Newline) {
@@ -623,10 +712,20 @@ void KotlinWriter::Write(string_view s) {
   WriteData(s.data(), s.size());
 }
 
+void KotlinWriter::WriteValue(string_view s) {
+  WriteValueData(s.data(), s.size());
+}
+
 void KotlinWriter::Write(const LocalName& name) {
   assert(local_sym_map_.count(name.name) == 1);
   Write(local_sym_map_[name.name]);
 }
+
+void KotlinWriter::WriteValue(const LocalName& name) {
+  assert(local_sym_map_.count(name.name) == 1);
+  WriteValue(local_sym_map_[name.name]);
+}
+
 
 std::string KotlinWriter::GetGlobalName(const std::string& name) const {
   assert(global_sym_map_.count(name) == 1);
@@ -646,6 +745,10 @@ void KotlinWriter::Write(const GlobalName& name) {
   Write(GetGlobalName(name.name));
 }
 
+void KotlinWriter::WriteValue(const GlobalName& name) {
+  WriteValue(GetGlobalName(name.name));
+}
+
 void KotlinWriter::Write(const ExternalPtr& name) {
   Write(AddressOf(GetGlobalName(name.name), class_name_));
 }
@@ -655,15 +758,23 @@ void KotlinWriter::Write(const Var& var) {
   Write(LocalName(var.name()));
 }
 
+void KotlinWriter::WriteValue(const Var& var) {
+  assert(var.is_name());
+  WriteValue(LocalName(var.name()));
+}
+
+
 void KotlinWriter::Write(const GotoLabel& goto_label) {
   const Label* label = FindLabel(goto_label.var);
   if (label->HasValue()) {
     assert(label->sig.size() == 1);
     assert(type_stack_.size() >= label->type_stack_size);
     Index dst = type_stack_.size() - label->type_stack_size - 1;
-    if (dst != 0 || IsConst(0)) {
-      Write(StackVar(dst, label->sig[0]), " = ", StackVarConst(0), "; ");
+    StackValue sv = PopValue();
+    if (sv.precedence != 0 || dst != 0) {
+      Write(StackVar(dst, label->sig[0]), " = ", sv.value, "; ");
     }
+    PushValue(sv);
   }
 
   if (goto_label.var.is_name()) {
@@ -695,6 +806,11 @@ void KotlinWriter::Write(const GlobalVar& var) {
   Write(GetGlobalName(var.var.name()));
 }
 
+void KotlinWriter::WriteValue(const GlobalVar& var) {
+  assert(var.var.is_name());
+  WriteValue(GetGlobalName(var.var.name()));
+}
+
 void KotlinWriter::Write(const StackVar& sv) {
   Index index = type_stack_.size() - 1 - sv.index;
   Type type = sv.type;
@@ -713,29 +829,23 @@ void KotlinWriter::Write(const StackVar& sv) {
   }
 }
 
-void KotlinWriter::Write(const StackVarConst& svc) {
-  Index index = type_stack_.size() - 1 - svc.index;
-  Type type = svc.type;
-
-  auto iter = const_stack_.find(index);
-  if (iter == const_stack_.end()) {
-    Write(StackVar(svc.index, svc.type));
-  } else {
-    if (type == Type::Any) {
-      assert(index < type_stack_.size());
-      type = type_stack_[index];
-    }
-    assert(type == iter->second.type());
-    Write(iter->second);
-  }
-}
-
 void KotlinWriter::Write(Type type) {
   switch (type) {
     case Type::I32: Write("Int"); break;
     case Type::I64: Write("Long"); break;
     case Type::F32: Write("Float"); break;
     case Type::F64: Write("Double"); break;
+    default:
+      WABT_UNREACHABLE;
+  }
+}
+
+void KotlinWriter::WriteValue(Type type) {
+  switch (type) {
+    case Type::I32: WriteValue("Int"); break;
+    case Type::I64: WriteValue("Long"); break;
+    case Type::F32: WriteValue("Float"); break;
+    case Type::F64: WriteValue("Double"); break;
     default:
       WABT_UNREACHABLE;
   }
@@ -757,6 +867,88 @@ void KotlinWriter::Write(const ResultType& rt) {
     Write(rt.types[0]);
   } else {
     Write("Unit");
+  }
+}
+
+void KotlinWriter::WriteValue(const Const& const_) {
+  switch (const_.type()) {
+    case Type::I32: {
+      int32_t i32_bits = static_cast<int32_t>(const_.u32());
+      if (i32_bits < 0) {
+        WriteValuef("(%d)", i32_bits);
+      } else {
+        WriteValuef("%d", i32_bits);
+      }
+      break;
+    }
+
+    case Type::I64: {
+      int64_t i64_bits = static_cast<int64_t>(const_.u64());
+      if (i64_bits == std::numeric_limits<int64_t>::min()) {
+        WriteValue("(-0x7FFFFFFFFFFFFFFFL - 1L)");
+      } else {
+        WriteValuef("%" PRId64 "L", i64_bits);
+      }
+      break;
+    }
+
+    case Type::F32: {
+      uint32_t f32_bits = const_.f32_bits();
+      if ((f32_bits & 0x7f800000u) == 0x7f800000u) {
+        const char* sign = (f32_bits & 0x80000000) ? "-" : "";
+        uint32_t significand = f32_bits & 0x7fffffu;
+        if (significand == 0) {
+          // Infinity.
+          WriteValuef("(%sFloat.POSITIVE_INFINITY)", sign);
+        } else {
+          WriteValue("Float.fromBits(");
+          // Nan.
+          WriteValuef("%d", f32_bits);
+          WriteValuef(") /* %snan:0x%06x */", sign, significand);
+        }
+      } else if (f32_bits == 0x80000000) {
+        // Negative zero. Special-cased so it isn't written as -0 below.
+        WriteValue("(-0.0f)");
+      } else {
+        WriteValuef("(%.9g", Bitcast<float>(f32_bits));
+        WriteValue("f)");
+      }
+      break;
+    }
+
+    case Type::F64: {
+      uint64_t f64_bits = const_.f64_bits();
+      if ((f64_bits & 0x7ff0000000000000ull) == 0x7ff0000000000000ull) {
+        const char* sign = (f64_bits & 0x8000000000000000ull) ? "-" : "";
+        uint64_t significand = f64_bits & 0xfffffffffffffull;
+        if (significand == 0) {
+          // Infinity.
+          WriteValuef("(%sDouble.POSITIVE_INFINITY)", sign);
+        } else {
+          // Nan.
+          WriteValue("Double.fromBits(");
+          if (f64_bits == Bitcast<uint64_t>(std::numeric_limits<int64_t>::min())) {
+            WriteValue("-0x7FFFFFFFFFFFFFFFL - 1L");
+          } else {
+            WriteValuef("%" PRId64 "L", f64_bits);
+          }
+          WriteValuef(") /* %snan:0x%013" PRIx64 " */", sign, significand);
+        }
+      } else if (f64_bits == 0x8000000000000000ull) {
+        // Negative zero. Special-cased so it isn't written as -0 below.
+        WriteValuef("(-0.0)");
+      } else {
+        std::string printed = StringPrintf("%#.17g", Bitcast<double>(f64_bits));
+        WriteValue(printed);
+        if (printed.back() == '.') {
+          WriteValue("0");
+        }
+      }
+      break;
+    }
+
+    default:
+      WABT_UNREACHABLE;
   }
 }
 
@@ -1330,19 +1522,27 @@ void KotlinWriter::Write(const Func& func) {
   stream_->ClearOffset();
 
   std::string label = DefineLocalScopeName(kImplicitFuncLabel);
+  value_stack_.clear();
   ResetTypeStack(0);
   std::string empty;  // Must not be temporary, since address is taken by Label.
   PushLabel(LabelType::Func, empty, func.decl.sig);
   Write(LabelDecl(label), "do ", OpenBrace());
   Write(func.exprs);
-  if (func.GetNumResults() > 0 && IsConst(0)) {
-    Const const_ = PopConst();
-    Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+  //if (func.GetNumResults() > 0 && IsConst(0)) {
+  //  Const const_ = PopConst();
+  //  Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+  //}
+  SpillValues(0, local_syms_, global_syms_, true, true);
+  while (value_stack_.size() > 0) {
+    DropValue();
   }
   Write(CloseBrace(), " while (false);", Newline());
   PopLabel();
   ResetTypeStack(0);
   PushTypes(func.decl.sig.result_types);
+  while (value_stack_.size() < type_stack_.size()) {
+    PushVar();
+  }
 
   if (!func.decl.sig.result_types.empty()) {
     // Return the top of the stack implicitly.
@@ -1434,6 +1634,13 @@ void KotlinWriter::WriteStackVarDeclarations() {
   }
 }
 
+void KotlinWriter::DropValue() {
+  // as it turns out these can trap, which is, in fact, a side-effect!
+  StackValue sv = PopValue();
+  // ...unless it's already been spilled or is a local/global
+  if (sv.precedence > 1) Write(sv.value, ";", Newline());
+}
+
 void KotlinWriter::Write(const ExprList& exprs) {
   for (const Expr& expr : exprs) {
     switch (expr.type()) {
@@ -1446,17 +1653,22 @@ void KotlinWriter::Write(const ExprList& exprs) {
         std::string label = DefineLocalScopeName(block.label);
         size_t mark = MarkTypeStack();
         PushLabel(LabelType::Block, block.label, block.decl.sig);
-        Write(LabelDecl(label));
-        Write("do ", OpenBrace());
+        SpillValues(0, local_syms_, global_syms_, true, true);
+        Write(LabelDecl(label), "do ", OpenBrace());
         Write(block.exprs);
-        if (block.decl.GetNumResults() > 0 && IsConst(0)) {
-          Const const_ = PopConst();
-          Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+        if (value_stack_.size() > mark) {
+          SpillValues(0, local_syms_, global_syms_, true, true);
+          while (value_stack_.size() > mark) {
+            DropValue();
+          }
         }
         Write(CloseBrace(), " while (false);", Newline());
         ResetTypeStack(mark);
         PopLabel();
         PushTypes(block.decl.sig.result_types);
+        while (value_stack_.size() < type_stack_.size()) {
+          PushVar();
+        }
         break;
       }
 
@@ -1466,14 +1678,15 @@ void KotlinWriter::Write(const ExprList& exprs) {
         return;
 
       case ExprType::BrIf:
-        Write("if (", StackVarConst(0), ".inz()) {");
+        Write("if ((", PopValue().value, ").inz()) {");
         DropTypes(1);
         Write(GotoLabel(cast<BrIfExpr>(&expr)->var), "}", Newline());
         break;
 
       case ExprType::BrTable: {
         const auto* bt_expr = cast<BrTableExpr>(&expr);
-        Write("when (", StackVarConst(0), ") ", OpenBrace());
+        SpillValues(1, local_syms_, global_syms_, true, true);
+        Write("when (", PopValue().value, ") ", OpenBrace());
         DropTypes(1);
         Index i = 0;
         for (const Var& var : bt_expr->targets) {
@@ -1492,21 +1705,28 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Index num_params = func.GetNumParams();
         Index num_results = func.GetNumResults();
         assert(type_stack_.size() >= num_params);
+        SymbolSet depends_locals;
+        SpillValues(num_params, depends_locals, global_syms_, true);
         if (num_results > 0) {
           assert(num_results == 1);
           Write(StackVar(num_params - 1, func.GetResultType(0)), " = ");
         }
 
         Write(GlobalName(var.name()), "(");
+        std::vector<std::string> args;
         for (Index i = 0; i < num_params; ++i) {
-          if (i != 0) {
-            Write(", ");
-          }
-          Write(StackVarConst(num_params - i - 1));
+          args.push_back(PopValue().value);
+        }
+        for (Index i = 0; i < num_params; ++i) {
+          Write(args.back(), ", ");
+          args.pop_back();
         }
         Write(");", Newline());
         DropTypes(num_params);
         PushTypes(func.decl.sig.result_types);
+        while (value_stack_.size() < type_stack_.size()) {
+          PushVar();
+        }
         break;
       }
 
@@ -1515,6 +1735,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Index num_params = decl.GetNumParams();
         Index num_results = decl.GetNumResults();
         assert(type_stack_.size() > num_params);
+        SymbolSet depends_locals;
+        SpillValues(num_params + 1, depends_locals, global_syms_, true);
         if (num_results > 0) {
           assert(num_results == 1);
           Write(StackVar(num_params, decl.GetResultType(0)), " = ");
@@ -1529,13 +1751,21 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Write("wasm_rt_impl.CALL_INDIRECT<");
         WriteFuncType(decl);
         Write(">(", GetGlobalName(table->name), ", func_types[");
-        Write(func_type_index, "], ", StackVarConst(0), ")(");
+        Write(func_type_index, "], ", PopValue().value, ")(");
+        std::vector<std::string> args;
         for (Index i = 0; i < num_params; ++i) {
-          Write(StackVarConst(num_params - i), ", ");
+          args.push_back(PopValue().value);
+        }
+        for (Index i = 0; i < num_params; ++i) {
+          Write(args.back(), ", ");
+          args.pop_back();
         }
         Write(");", Newline());
         DropTypes(num_params + 1);
         PushTypes(decl.sig.result_types);
+        while (value_stack_.size() < type_stack_.size()) {
+          PushVar();
+        }
         break;
       }
 
@@ -1546,7 +1776,10 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::Const: {
         const Const& const_ = cast<ConstExpr>(&expr)->const_;
         PushType(const_.type());
-        PushConst(const_);
+        StackValue sv;
+        sv.precedence = 1;
+        PushValue(sv);
+        WriteValue(const_);
         break;
       }
 
@@ -1555,19 +1788,29 @@ void KotlinWriter::Write(const ExprList& exprs) {
         break;
 
       case ExprType::Drop:
+        DropValue();
         DropTypes(1);
         break;
 
       case ExprType::GlobalGet: {
         const Var& var = cast<GlobalGetExpr>(&expr)->var;
         PushType(module_->GetGlobal(var)->type);
-        Write(StackVar(0), " = ", GlobalVar(var), ";", Newline());
+        StackValue sv;
+        sv.precedence = 1;
+        sv.depends_globals.insert(var.name());
+        PushValue(sv);
+        WriteValue(GlobalVar(var));
         break;
       }
 
       case ExprType::GlobalSet: {
         const Var& var = cast<GlobalSetExpr>(&expr)->var;
-        Write(GlobalVar(var), " = ", StackVarConst(0), ";", Newline());
+        assert(var.is_name());
+        SymbolSet depends_locals;
+        SymbolSet depends_globals { var.name() };
+        SpillValues(1, depends_locals, depends_globals, false);
+        StackValue sv = PopValue();
+        Write(GlobalVar(var), " = ", sv.value, ";", Newline());
         DropTypes(1);
         break;
       }
@@ -1575,24 +1818,33 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::If: {
         const IfExpr& if_ = *cast<IfExpr>(&expr);
         std::string label = DefineLocalScopeName(if_.true_.label);
+        // spill everything before block.
+        SpillValues(1, local_syms_, global_syms_, true, true);
+        // FIXME(Soni) put the block INSIDE the if.
         Write(LabelDecl(label), "do ", OpenBrace());
-        Write("if (", StackVarConst(0), ".inz()) ", OpenBrace());
+        Write("if ((", PopValue().value, ").inz()) ", OpenBrace());
         DropTypes(1);
         size_t mark = MarkTypeStack();
         PushLabel(LabelType::If, if_.true_.label, if_.true_.decl.sig);
         Write(if_.true_.exprs);
         if (!if_.false_.empty()) {
-          if (if_.true_.decl.GetNumResults() > 0 && IsConst(0)) {
-            Const const_ = PopConst();
-            Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+          if (value_stack_.size() > mark) {
+            // FIXME(Soni) this is lazy and not very efficient.
+            SpillValues(0, local_syms_, global_syms_, true, true);
+            while (value_stack_.size() > mark) {
+              DropValue();
+            }
           }
           Write(CloseBrace());
           ResetTypeStack(mark);
           Write(" else ", OpenBrace(), if_.false_);
         }
-        if (if_.true_.decl.GetNumResults() > 0 && IsConst(0)) {
-          Const const_ = PopConst();
-          Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+        if (value_stack_.size() > mark) {
+          // FIXME(Soni) this is lazy and not very efficient.
+          SpillValues(0, local_syms_, global_syms_, true, true);
+          while (value_stack_.size() > mark) {
+            DropValue();
+          }
         }
         Write(CloseBrace());
         Write(CloseBrace(), " while (false);");
@@ -1600,6 +1852,9 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Write(Newline());
         PopLabel();
         PushTypes(if_.true_.decl.sig.result_types);
+        while (value_stack_.size() < type_stack_.size()) {
+          PushVar();
+        }
         break;
       }
 
@@ -1610,20 +1865,39 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::LocalGet: {
         const Var& var = cast<LocalGetExpr>(&expr)->var;
         PushType(func_->GetLocalType(var));
-        Write(StackVar(0), " = ", var, ";", Newline());
+        StackValue sv;
+        sv.precedence = 1;
+        sv.depends_locals.insert(var.name());
+        PushValue(sv);
+        WriteValue(var);
         break;
       }
 
       case ExprType::LocalSet: {
         const Var& var = cast<LocalSetExpr>(&expr)->var;
-        Write(var, " = ", StackVarConst(0), ";", Newline());
+        assert(var.is_name());
+        SymbolSet depends_locals { var.name() };
+        SymbolSet depends_globals;
+        SpillValues(1, depends_locals, depends_globals, false);
+        StackValue sv = PopValue();
+        Write(var, " = ", sv.value, ";", Newline());
         DropTypes(1);
         break;
       }
 
       case ExprType::LocalTee: {
         const Var& var = cast<LocalTeeExpr>(&expr)->var;
-        Write(var, " = ", StackVarConst(0), ";", Newline());
+        assert(var.is_name());
+        SymbolSet depends_locals { var.name() };
+        SymbolSet depends_globals;
+        SpillValues(1, depends_locals, depends_globals, false);
+        StackValue sv = PopValue();
+        Write(var, " = ", sv.value, ";", Newline());
+        StackValue new_sv;
+        new_sv.precedence = 1;
+        new_sv.depends_locals.insert(var.name());
+        PushValue(new_sv);
+        WriteValue(var);
         break;
       }
 
@@ -1631,17 +1905,23 @@ void KotlinWriter::Write(const ExprList& exprs) {
         const Block& block = cast<LoopExpr>(&expr)->block;
         if (!block.exprs.empty()) {
           std::string label = DefineLocalScopeName(block.label);
+          SpillValues(0, local_syms_, global_syms_, true, true);
           Write(LabelDecl(label), "while (true) ", OpenBrace());
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
           Write(block.exprs);
-          if (block.decl.GetNumResults() > 0 && IsConst(0)) {
-            Const const_ = PopConst();
-            Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
+          if (value_stack_.size() > mark) {
+            SpillValues(0, local_syms_, global_syms_, true, true);
+            while (value_stack_.size() > mark) {
+              DropValue();
+            }
           }
           ResetTypeStack(mark);
           PopLabel();
           PushTypes(block.decl.sig.result_types);
+          while (value_stack_.size() < type_stack_.size()) {
+            PushVar();
+          }
           Write("break@", label, ";", Newline());
           Write(CloseBrace(), Newline());
         }
@@ -1669,12 +1949,17 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::MemoryGrow: {
         assert(module_->memories.size() == 1);
         Memory* memory = module_->memories[0];
+        SymbolSet depends_locals;
+        SymbolSet depends_globals;
+        // spill memory accesses
+        SpillValues(0, depends_locals, depends_globals, true);
 
         assert(StackType(0) == Type::I32);
         Write(StackVar(0, Type::I32), " = wasm_rt_impl.grow_memory(", ExternalPtr(memory->name),
-              ", ", StackVarConst(0), ");", Newline());
+              ", ", PopValue().value, ");", Newline());
         DropTypes(1);
         PushType(Type::I32);
+        PushVar();
         break;
       }
 
@@ -1683,8 +1968,11 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Memory* memory = module_->memories[0];
 
         PushType(Type::I32);
-        Write(StackVar(0), " = ", GetGlobalName(memory->name), ".pages;",
-              Newline());
+        StackValue sv;
+        sv.precedence = 2;
+        sv.depends_memory = true;
+        PushValue(sv);
+        WriteValue(GetGlobalName(memory->name), ".pages");
         break;
       }
 
@@ -1700,10 +1988,27 @@ void KotlinWriter::Write(const ExprList& exprs) {
 
       case ExprType::Select: {
         Type type = StackType(1);
-        Write(StackVar(2), " = if (", StackVarConst(0), ".inz()) ", StackVarConst(2), " else ",
-              StackVarConst(1), ";", Newline());
+        // do we have to spill everything due to order of evaluation?
+        //SpillValues(0, local_syms_, global_syms_, true, true);
+        StackValue first = PopValue();
+        StackValue second = PopValue();
+        StackValue third = PopValue();
+        //Write(StackVar(2), " = if ((", first.value, ").inz()) (", third.value, ") else (",
+        //      second.value, ");", Newline());
         DropTypes(3);
         PushType(type);
+        //PushVar();
+        StackValue sv;
+        sv.precedence = 1;
+        sv.depends_locals.insert(first.depends_locals.begin(), first.depends_locals.end());
+        sv.depends_locals.insert(second.depends_locals.begin(), second.depends_locals.end());
+        sv.depends_locals.insert(third.depends_locals.begin(), third.depends_locals.end());
+        sv.depends_globals.insert(first.depends_globals.begin(), first.depends_globals.end());
+        sv.depends_globals.insert(second.depends_globals.begin(), second.depends_globals.end());
+        sv.depends_globals.insert(third.depends_globals.begin(), third.depends_globals.end());
+        sv.depends_memory = first.depends_memory | second.depends_memory | third.depends_memory;
+        PushValue(sv);
+        WriteValue("select(", third.value, ", ", second.value, ", ", first.value, ")");
         break;
       }
 
@@ -1769,45 +2074,66 @@ void KotlinWriter::Write(const ExprList& exprs) {
   }
 }
 
-void KotlinWriter::WriteSimpleUnaryExpr(Opcode opcode, const char* op) {
-  Type result_type = opcode.GetResultType();
-  Write(StackVar(0, result_type), " = ", op, "(", StackVarConst(0), ");", Newline());
+void KotlinWriter::WriteSimpleUnaryExpr(Type result_type, const char* op) {
+  StackValue sv = PopValue();
   DropTypes(1);
-  PushType(opcode.GetResultType());
+  PushType(result_type);
+  sv.value = op + ("(" + sv.value) + ")";
+  sv.precedence = 3;
+  PushValue(sv);
 }
 
-void KotlinWriter::WritePostfixUnaryExpr(Opcode opcode, const char* op) {
-  Type result_type = opcode.GetResultType();
-  Write(StackVar(0, result_type), " = (", StackVarConst(0), ")", op, ";", Newline());
+void KotlinWriter::WritePostfixUnaryExpr(Type result_type, const char* op) {
+  StackValue sv = PopValue();
   DropTypes(1);
-  PushType(opcode.GetResultType());
+  PushType(result_type);
+  sv.value = ("(" + sv.value) + ")" + op;
+  sv.precedence = 2;
+  PushValue(sv);
 }
 
 void KotlinWriter::WriteInfixBinaryExpr(Opcode opcode,
                                    const char* op,
-                                   AssignOp assign_op,
+                                   uint8_t precedence,
                                    bool debooleanize) {
   Type result_type = opcode.GetResultType();
-  Write(StackVar(1, result_type));
-  if (assign_op == AssignOp::Allowed && !IsConst(1)) {
-    Write(" ", op, "= ", StackVarConst(0));
-  } else {
-    Write(" = (", StackVarConst(1), " ", op, " ", StackVarConst(0), ")");
-  }
-  if (debooleanize) {
-    Write(".bto", result_type, "()");
-  }
-  Write(";", Newline());
+  StackValue sv_right = PopValue();
+  StackValue sv_left = PopValue();
   DropTypes(2);
   PushType(result_type);
+  if (sv_left.precedence > precedence) {
+    sv_left.value = ("(" + sv_left.value) + ")";
+  }
+  if (sv_right.precedence >= precedence) {
+    sv_right.value = ("(" + sv_right.value) + ")";
+  }
+  sv_left.value = sv_left.value + " " + op + " " + sv_right.value;
+  sv_left.precedence = precedence;
+  sv_left.depends_locals.insert(sv_right.depends_locals.begin(), sv_right.depends_locals.end());
+  sv_left.depends_globals.insert(sv_right.depends_globals.begin(), sv_right.depends_globals.end());
+  sv_left.depends_memory |= sv_right.depends_memory;
+  if (debooleanize) {
+    sv_left.precedence = 2;
+    sv_left.value = ("(" + sv_left.value) + ")";
+  }
+  PushValue(sv_left);
+  if (debooleanize) {
+    WriteValue(".bto", result_type, "()");
+  }
 }
 
 void KotlinWriter::WritePrefixBinaryExpr(Opcode opcode, const char* op) {
   Type result_type = opcode.GetResultType();
-  Write(StackVar(1, result_type), " = ", op, "(", StackVarConst(1), ", ",
-        StackVarConst(0), ");", Newline());
+  StackValue sv_right = PopValue();
+  StackValue sv_left = PopValue();
   DropTypes(2);
   PushType(result_type);
+  sv_left.value = op + ("(" + sv_left.value) + ", " + sv_right.value + ")";
+  sv_left.precedence = 2;
+  sv_left.depends_locals.insert(sv_right.depends_locals.begin(), sv_right.depends_locals.end());
+  sv_left.depends_globals.insert(sv_right.depends_globals.begin(), sv_right.depends_globals.end());
+  sv_left.depends_memory |= sv_right.depends_memory;
+  PushValue(sv_left);
 }
 
 void KotlinWriter::WriteUnsignedCompareExpr(Opcode opcode, const char* op) {
@@ -1822,11 +2148,18 @@ void KotlinWriter::WriteUnsignedCompareExpr(Opcode opcode, const char* op) {
     assert(type == Type::I64);
     cls = "java.lang.Long";
   }
-  Write(StackVar(1, result_type), " = (", cls, ".compareUnsigned(",
-        StackVarConst(1), ", ", StackVarConst(0), ")", op, "0).bto", result_type, "();",
-        Newline());
+  StackValue sv_right = PopValue();
+  StackValue sv_left = PopValue();
   DropTypes(2);
   PushType(result_type);
+  sv_left.precedence = 2;
+  sv_left.depends_locals.insert(sv_right.depends_locals.begin(), sv_right.depends_locals.end());
+  sv_left.depends_globals.insert(sv_right.depends_globals.begin(), sv_right.depends_globals.end());
+  sv_left.depends_memory |= sv_right.depends_memory;
+  std::string oldleft;
+  std::swap(oldleft, sv_left.value);
+  PushValue(sv_left);
+  WriteValue("(", cls, ".compareUnsigned(", oldleft, ", ", sv_right.value, ")", op, "0).bto", result_type, "()");
 }
 
 void KotlinWriter::Write(const BinaryExpr& expr) {
@@ -1835,21 +2168,21 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
     case Opcode::I64Add:
     case Opcode::F32Add:
     case Opcode::F64Add:
-      WriteInfixBinaryExpr(expr.opcode, "+");
+      WriteInfixBinaryExpr(expr.opcode, "+", 5);
       break;
 
     case Opcode::I32Sub:
     case Opcode::I64Sub:
     case Opcode::F32Sub:
     case Opcode::F64Sub:
-      WriteInfixBinaryExpr(expr.opcode, "-");
+      WriteInfixBinaryExpr(expr.opcode, "-", 5);
       break;
 
     case Opcode::I32Mul:
     case Opcode::I64Mul:
     case Opcode::F32Mul:
     case Opcode::F64Mul:
-      WriteInfixBinaryExpr(expr.opcode, "*");
+      WriteInfixBinaryExpr(expr.opcode, "*", 4);
       break;
 
     case Opcode::I32DivS:
@@ -1867,7 +2200,7 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
 
     case Opcode::F32Div:
     case Opcode::F64Div:
-      WriteInfixBinaryExpr(expr.opcode, "/");
+      WriteInfixBinaryExpr(expr.opcode, "/", 4);
       break;
 
     case Opcode::I32RemS:
@@ -1885,38 +2218,44 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
 
     case Opcode::I32And:
     case Opcode::I64And:
-      WriteInfixBinaryExpr(expr.opcode, "and", AssignOp::Disallowed);
+      WriteInfixBinaryExpr(expr.opcode, "and", 7);
       break;
 
     case Opcode::I32Or:
     case Opcode::I64Or:
-      WriteInfixBinaryExpr(expr.opcode, "or", AssignOp::Disallowed);
+      WriteInfixBinaryExpr(expr.opcode, "or", 7);
       break;
 
     case Opcode::I32Xor:
     case Opcode::I64Xor:
-      WriteInfixBinaryExpr(expr.opcode, "xor", AssignOp::Disallowed);
+      WriteInfixBinaryExpr(expr.opcode, "xor", 7);
       break;
 
     case Opcode::I32Shl:
+      WriteInfixBinaryExpr(expr.opcode, "shl", 7);
+      break;
+
     case Opcode::I64Shl:
-      Write(StackVar(1), " = (", StackVarConst(1), " shl (", StackVarConst(0), ".toInt()",
-            "));", Newline());
-      DropTypes(1);
+      WritePostfixUnaryExpr(Type::I32, ".toInt()");
+      WriteInfixBinaryExpr(expr.opcode, "shl", 7);
       break;
 
     case Opcode::I32ShrS:
+      WriteInfixBinaryExpr(expr.opcode, "shr", 7);
+      break;
+
     case Opcode::I64ShrS:
-      Write(StackVar(1), " = (", StackVarConst(1), " shr (", StackVarConst(0), ".toInt()",
-            "));", Newline());
-      DropTypes(1);
+      WritePostfixUnaryExpr(Type::I32, ".toInt()");
+      WriteInfixBinaryExpr(expr.opcode, "shr", 7);
       break;
 
     case Opcode::I32ShrU:
+      WriteInfixBinaryExpr(expr.opcode, "ushr", 7);
+      break;
+
     case Opcode::I64ShrU:
-      Write(StackVar(1), " = (", StackVarConst(1), " ushr (", StackVarConst(0), ".toInt()",
-            "));", Newline());
-      DropTypes(1);
+      WritePostfixUnaryExpr(Type::I32, ".toInt()");
+      WriteInfixBinaryExpr(expr.opcode, "ushr", 7);
       break;
 
     case Opcode::I32Rotl:
@@ -1961,14 +2300,14 @@ void KotlinWriter::Write(const CompareExpr& expr) {
     case Opcode::I64Eq:
     case Opcode::F32Eq:
     case Opcode::F64Eq:
-      WriteInfixBinaryExpr(expr.opcode, "==", AssignOp::Disallowed, true);
+      WriteInfixBinaryExpr(expr.opcode, "==", 11, true);
       break;
 
     case Opcode::I32Ne:
     case Opcode::I64Ne:
     case Opcode::F32Ne:
     case Opcode::F64Ne:
-      WriteInfixBinaryExpr(expr.opcode, "!=", AssignOp::Disallowed, true);
+      WriteInfixBinaryExpr(expr.opcode, "!=", 11, true);
       break;
 
     case Opcode::I32LtU:
@@ -1980,7 +2319,7 @@ void KotlinWriter::Write(const CompareExpr& expr) {
     case Opcode::I64LtS:
     case Opcode::F32Lt:
     case Opcode::F64Lt:
-      WriteInfixBinaryExpr(expr.opcode, "<", AssignOp::Disallowed, true);
+      WriteInfixBinaryExpr(expr.opcode, "<", 10, true);
       break;
 
     case Opcode::I32LeU:
@@ -1992,7 +2331,7 @@ void KotlinWriter::Write(const CompareExpr& expr) {
     case Opcode::I64LeS:
     case Opcode::F32Le:
     case Opcode::F64Le:
-      WriteInfixBinaryExpr(expr.opcode, "<=", AssignOp::Disallowed, true);
+      WriteInfixBinaryExpr(expr.opcode, "<=", 10, true);
       break;
 
     case Opcode::I32GtU:
@@ -2004,7 +2343,7 @@ void KotlinWriter::Write(const CompareExpr& expr) {
     case Opcode::I64GtS:
     case Opcode::F32Gt:
     case Opcode::F64Gt:
-      WriteInfixBinaryExpr(expr.opcode, ">", AssignOp::Disallowed, true);
+      WriteInfixBinaryExpr(expr.opcode, ">", 10, true);
       break;
 
     case Opcode::I32GeU:
@@ -2016,7 +2355,7 @@ void KotlinWriter::Write(const CompareExpr& expr) {
     case Opcode::I64GeS:
     case Opcode::F32Ge:
     case Opcode::F64Ge:
-      WriteInfixBinaryExpr(expr.opcode, ">=", AssignOp::Disallowed, true);
+      WriteInfixBinaryExpr(expr.opcode, ">=", 10, true);
       break;
 
     default:
@@ -2027,132 +2366,128 @@ void KotlinWriter::Write(const CompareExpr& expr) {
 void KotlinWriter::Write(const ConvertExpr& expr) {
   switch (expr.opcode) {
     case Opcode::I32Eqz:
-    case Opcode::I64Eqz: {
-        Type result_type = expr.opcode.GetResultType();
-        Write(StackVar(0, result_type), " = (", StackVarConst(0), ").isz().bto", result_type,"();", Newline());
-        DropTypes(1);
-        PushType(expr.opcode.GetResultType());
-      }
+    case Opcode::I64Eqz:
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".isz()");
       break;
 
     case Opcode::I64ExtendI32S:
-      WritePostfixUnaryExpr(expr.opcode, ".toLong()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toLong()");
       break;
 
     case Opcode::I64ExtendI32U:
-      WritePostfixUnaryExpr(expr.opcode, ".toLong() and 0xFFFFFFFFL");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toLong().and(0xFFFFFFFFL)");
       break;
 
     case Opcode::I32WrapI64:
-      WritePostfixUnaryExpr(expr.opcode, ".toInt()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toInt()");
       break;
 
     case Opcode::I32TruncF32S:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I32_TRUNC_S_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_S_F32");
       break;
 
     case Opcode::I64TruncF32S:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I64_TRUNC_S_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_S_F32");
       break;
 
     case Opcode::I32TruncF64S:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I32_TRUNC_S_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_S_F64");
       break;
 
     case Opcode::I64TruncF64S:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I64_TRUNC_S_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_S_F64");
       break;
 
     case Opcode::I32TruncF32U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I32_TRUNC_U_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_U_F32");
       break;
 
     case Opcode::I64TruncF32U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I64_TRUNC_U_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_U_F32");
       break;
 
     case Opcode::I32TruncF64U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I32_TRUNC_U_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_U_F64");
       break;
 
     case Opcode::I64TruncF64U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I64_TRUNC_U_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_U_F64");
       break;
 
     case Opcode::I32TruncSatF32S:
     case Opcode::I32TruncSatF64S:
-      WritePostfixUnaryExpr(expr.opcode, ".toInt()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toInt()");
       break;
 
     case Opcode::I64TruncSatF32S:
     case Opcode::I64TruncSatF64S:
-      WritePostfixUnaryExpr(expr.opcode, ".toLong()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toLong()");
       break;
 
     case Opcode::I32TruncSatF32U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I32_TRUNC_SAT_U_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_SAT_U_F32");
       break;
 
     case Opcode::I64TruncSatF32U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I64_TRUNC_SAT_U_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_SAT_U_F32");
       break;
 
     case Opcode::I32TruncSatF64U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I32_TRUNC_SAT_U_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_SAT_U_F64");
       break;
 
     case Opcode::I64TruncSatF64U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.I64_TRUNC_SAT_U_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_SAT_U_F64");
       break;
 
     case Opcode::F32ConvertI32S:
     case Opcode::F32ConvertI64S:
-      WritePostfixUnaryExpr(expr.opcode, ".toFloat()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toFloat()");
       break;
 
     case Opcode::F32ConvertI32U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.UIntToFloat");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.UIntToFloat");
       break;
 
     case Opcode::F32DemoteF64:
-      WritePostfixUnaryExpr(expr.opcode, ".toFloat()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toFloat()");
       break;
 
     case Opcode::F32ConvertI64U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.ULongToFloat");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.ULongToFloat");
       break;
 
     case Opcode::F64ConvertI32S:
     case Opcode::F64ConvertI64S:
-      WritePostfixUnaryExpr(expr.opcode, ".toDouble()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toDouble()");
       break;
 
     case Opcode::F64ConvertI32U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.UIntToDouble");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.UIntToDouble");
       break;
 
     case Opcode::F64PromoteF32:
-      WritePostfixUnaryExpr(expr.opcode, ".toDouble()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toDouble()");
       break;
 
     case Opcode::F64ConvertI64U:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.ULongToDouble");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.ULongToDouble");
       break;
 
     case Opcode::F32ReinterpretI32:
-      WriteSimpleUnaryExpr(expr.opcode, "Float.fromBits");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "Float.fromBits");
       break;
 
     case Opcode::I32ReinterpretF32:
-      WritePostfixUnaryExpr(expr.opcode, ".toRawBits()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toRawBits()");
       break;
 
     case Opcode::F64ReinterpretI64:
-      WriteSimpleUnaryExpr(expr.opcode, "Double.fromBits");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "Double.fromBits");
       break;
 
     case Opcode::I64ReinterpretF64:
-      WritePostfixUnaryExpr(expr.opcode, ".toRawBits()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toRawBits()");
       break;
 
     default:
@@ -2186,13 +2521,23 @@ void KotlinWriter::Write(const LoadExpr& expr) {
   Memory* memory = module_->memories[0];
 
   Type result_type = expr.opcode.GetResultType();
-  Write(StackVar(0, result_type), " = ", GlobalName(memory->name), ".", func,
-        "(", StackVarConst(0));
-  if (expr.offset != 0)
-    Writef(", %d", static_cast<int32_t>(expr.offset));
-  Write(");", Newline());
+  StackValue sv = PopValue();
   DropTypes(1);
   PushType(result_type);
+  std::string pos;
+  std::swap(sv.value, pos);
+  sv.precedence = 2;
+  sv.depends_memory = true;
+  PushValue(sv);
+  WriteValue(GlobalName(memory->name), ".", func, "(", pos);
+  if (expr.offset != 0)
+    WriteValuef(", %d", static_cast<int32_t>(expr.offset));
+  WriteValue(")");
+
+  //Write(StackVar(0), " = ", GlobalName(memory->name), ".", func, "(", pos);
+  //if (expr.offset != 0)
+  //  Writef(", %d", static_cast<int32_t>(expr.offset));
+  //Write(");", Newline());
 }
 
 void KotlinWriter::Write(const StoreExpr& expr) {
@@ -2215,93 +2560,98 @@ void KotlinWriter::Write(const StoreExpr& expr) {
   assert(module_->memories.size() == 1);
   Memory* memory = module_->memories[0];
 
+  SymbolSet depends_locals;
+  SymbolSet depends_globals;
+  SpillValues(2, depends_locals, depends_globals, true);
+  StackValue sv_right = PopValue();
+  StackValue sv_left = PopValue();
+  DropTypes(2);
   Write(GlobalName(memory->name), ".", func, "(",
-        StackVarConst(1));
+        sv_left.value);
   if (expr.offset != 0)
     Writef(", %d", static_cast<int32_t>(expr.offset));
-  Write(", ", StackVarConst(0), ");", Newline());
-  DropTypes(2);
+  Write(", ", sv_right.value, ");", Newline());
 }
 
 void KotlinWriter::Write(const UnaryExpr& expr) {
   switch (expr.opcode) {
     case Opcode::I32Clz:
-      WritePostfixUnaryExpr(expr.opcode, ".countLeadingZeroBits()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".countLeadingZeroBits()");
       break;
 
     case Opcode::I64Clz:
-      WritePostfixUnaryExpr(expr.opcode, ".countLeadingZeroBits().toLong()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".countLeadingZeroBits().toLong()");
       break;
 
     case Opcode::I32Ctz:
-      WritePostfixUnaryExpr(expr.opcode, ".countTrailingZeroBits()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".countTrailingZeroBits()");
       break;
 
     case Opcode::I64Ctz:
-      WritePostfixUnaryExpr(expr.opcode, ".countTrailingZeroBits().toLong()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".countTrailingZeroBits().toLong()");
       break;
 
     case Opcode::I32Popcnt:
-      WritePostfixUnaryExpr(expr.opcode, ".countOneBits()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".countOneBits()");
       break;
 
     case Opcode::I64Popcnt:
-      WritePostfixUnaryExpr(expr.opcode, ".countOneBits().toLong()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".countOneBits().toLong()");
       break;
 
     case Opcode::F32Neg:
     case Opcode::F64Neg:
-      WriteSimpleUnaryExpr(expr.opcode, "-");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "-");
       break;
 
     case Opcode::F32Abs:
     case Opcode::F64Abs:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.abs");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.abs");
       break;
 
     case Opcode::F32Sqrt:
     case Opcode::F64Sqrt:
-      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.sqrt");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "kotlin.math.sqrt");
       break;
 
     case Opcode::F32Ceil:
     case Opcode::F64Ceil:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.ceil");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.ceil");
       break;
 
     case Opcode::F32Floor:
     case Opcode::F64Floor:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.floor");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.floor");
       break;
 
     case Opcode::F32Trunc:
     case Opcode::F64Trunc:
-      WriteSimpleUnaryExpr(expr.opcode, "wasm_rt_impl.truncate");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.truncate");
       break;
 
     case Opcode::F32Nearest:
     case Opcode::F64Nearest:
-      WriteSimpleUnaryExpr(expr.opcode, "kotlin.math.round");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "kotlin.math.round");
       break;
 
     case Opcode::I32Extend8S:
-      WritePostfixUnaryExpr(expr.opcode, ".toByte().toInt()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toByte().toInt()");
       break;
 
     case Opcode::I32Extend16S:
-      WritePostfixUnaryExpr(expr.opcode, ".toShort().toInt()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toShort().toInt()");
       break;
 
     case Opcode::I64Extend8S:
-      WritePostfixUnaryExpr(expr.opcode, ".toByte().toLong()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toByte().toLong()");
       break;
 
     case Opcode::I64Extend16S:
-      WritePostfixUnaryExpr(expr.opcode, ".toShort().toLong()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toShort().toLong()");
       break;
 
     case Opcode::I64Extend32S:
-      WritePostfixUnaryExpr(expr.opcode, ".toInt().toLong()");
+      WritePostfixUnaryExpr(expr.opcode.GetResultType(), ".toInt().toLong()");
       break;
 
     default:
@@ -2312,11 +2662,12 @@ void KotlinWriter::Write(const UnaryExpr& expr) {
 void KotlinWriter::Write(const TernaryExpr& expr) {
   switch (expr.opcode) {
     case Opcode::V128BitSelect: {
-      Type result_type = expr.opcode.GetResultType();
-      Write(StackVar(2, result_type), " = ", "v128.bitselect", "(", StackVarConst(0),
-            ", ", StackVarConst(1), ", ", StackVarConst(2), ");", Newline());
-      DropTypes(3);
-      PushType(result_type);
+      //Type result_type = expr.opcode.GetResultType();
+      //Write(StackVar(2, result_type), " = ", "v128.bitselect", "(", StackVar(0),
+      //      ", ", StackVar(1), ", ", StackVar(2), ");", Newline());
+      //DropTypes(3);
+      //PushType(result_type);
+      UNIMPLEMENTED("SIMD support");
       break;
     }
     default:
@@ -2336,9 +2687,10 @@ void KotlinWriter::Write(const SimdLaneOpExpr& expr) {
     case Opcode::I64X2ExtractLane:
     case Opcode::F32X4ExtractLane:
     case Opcode::F64X2ExtractLane: {
-      Write(StackVar(0, result_type), " = ", expr.opcode.GetName(), "(",
-            StackVarConst(0), ", lane Imm: ", expr.val, ");", Newline());
-      DropTypes(1);
+      //Write(StackVar(0, result_type), " = ", expr.opcode.GetName(), "(",
+      //      StackVar(0), ", lane Imm: ", expr.val, ");", Newline());
+      //DropTypes(1);
+      UNIMPLEMENTED("SIMD support");
       break;
     }
     case Opcode::I8X16ReplaceLane:
@@ -2347,10 +2699,11 @@ void KotlinWriter::Write(const SimdLaneOpExpr& expr) {
     case Opcode::I64X2ReplaceLane:
     case Opcode::F32X4ReplaceLane:
     case Opcode::F64X2ReplaceLane: {
-      Write(StackVar(1, result_type), " = ", expr.opcode.GetName(), "(",
-            StackVarConst(0), ", ", StackVarConst(1), ", lane Imm: ", expr.val, ");",
-            Newline());
-      DropTypes(2);
+      //Write(StackVar(1, result_type), " = ", expr.opcode.GetName(), "(",
+      //      StackVar(0), ", ", StackVar(1), ", lane Imm: ", expr.val, ");",
+      //      Newline());
+      //DropTypes(2);
+      UNIMPLEMENTED("SIMD support");
       break;
     }
     default:
@@ -2369,27 +2722,29 @@ void KotlinWriter::Write(const SimdStoreLaneExpr& expr) {
 }
 
 void KotlinWriter::Write(const SimdShuffleOpExpr& expr) {
-  Type result_type = expr.opcode.GetResultType();
-  Write(StackVar(1, result_type), " = ", expr.opcode.GetName(), "(",
-        StackVarConst(1), " ", StackVarConst(0), ", lane Imm: $0x%08x %08x %08x %08x",
-        expr.val.u32(0), expr.val.u32(1), expr.val.u32(2), expr.val.u32(3), ")",
-        Newline());
-  DropTypes(2);
-  PushType(result_type);
+  //Type result_type = expr.opcode.GetResultType();
+  //Write(StackVar(1, result_type), " = ", expr.opcode.GetName(), "(",
+  //      StackVar(1), " ", StackVar(0), ", lane Imm: $0x%08x %08x %08x %08x",
+  //      expr.val.u32(0), expr.val.u32(1), expr.val.u32(2), expr.val.u32(3), ")",
+  //      Newline());
+  //DropTypes(2);
+  //PushType(result_type);
+  UNIMPLEMENTED("SIMD support");
 }
 
 void KotlinWriter::Write(const LoadSplatExpr& expr) {
-  assert(module_->memories.size() == 1);
-  Memory* memory = module_->memories[0];
+  //assert(module_->memories.size() == 1);
+  //Memory* memory = module_->memories[0];
 
-  Type result_type = expr.opcode.GetResultType();
-  Write(StackVar(0, result_type), " = ", expr.opcode.GetName(), "(",
-        ExternalPtr(memory->name), ", (long)(", StackVarConst(0));
-  if (expr.offset != 0)
-    Write(" + ", expr.offset);
-  Write("));", Newline());
-  DropTypes(1);
-  PushType(result_type);
+  //Type result_type = expr.opcode.GetResultType();
+  //Write(StackVar(0, result_type), " = ", expr.opcode.GetName(), "(",
+  //      ExternalPtr(memory->name), ", (long)(", StackVar(0));
+  //if (expr.offset != 0)
+  //  Write(" + ", expr.offset);
+  //Write("));", Newline());
+  //DropTypes(1);
+  //PushType(result_type);
+  UNIMPLEMENTED("SIMD support");
 }
 
 void KotlinWriter::Write(const LoadZeroExpr& expr) {

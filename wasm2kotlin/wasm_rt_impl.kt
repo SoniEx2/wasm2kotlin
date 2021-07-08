@@ -238,10 +238,13 @@ fun register_func_type(num_params: Int, num_results: Int, vararg types: Any): In
 inline fun Boolean.btoInt(): Int = if (this) 1 else 0
 inline fun Boolean.btoLong(): Long = if (this) 1L else 0L
 
-inline fun Int.isz(): Boolean = this == 0
-inline fun Long.isz(): Boolean = this == 0L
+inline fun Int.isz(): Int = if (this == 0) 1 else 0
+inline fun Long.isz(): Int = if (this == 0L) 1 else 0
 inline fun Int.inz(): Boolean = this != 0
 inline fun Long.inz(): Boolean = this != 0L
+
+// NOTE(Soni): to preserve order of evaluation
+inline fun <T> select(third: T, second: T, first: Int): T = if (first != 0) third else second
 
 fun <T> CALL_INDIRECT(table: Table, type: Int, func: Int): T {
     val elem = try {

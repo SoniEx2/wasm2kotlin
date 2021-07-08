@@ -6,4 +6,5 @@ const char SECTION_NAME(includes)[] =
 "import wasm_rt_impl.btoLong\n"
 "import wasm_rt_impl.isz\n"
 "import wasm_rt_impl.inz\n"
+"import wasm_rt_impl.select\n"
 ;
