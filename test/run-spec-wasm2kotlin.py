@@ -373,7 +373,7 @@ class CWriter(object):
         if type_ == 'invoke':
             return 'moduleRegistry.importFunc<%s, %s>("%s", "%s")(%s)' % (sig, ret, mangled_module_name, field, self._ConstantList(action.get('args', [])))
         elif type_ == 'get':
-            return 'moduleRegistry.importGlobal<%s>("%s", "%s").get()' % (sig, mangled_module_name, field)
+            return 'getGlobal<%s>(moduleRegistry, "%s", "%s")' % (sig, mangled_module_name, field)
         else:
             raise Error('Unexpected action type: %s' % type_)
 

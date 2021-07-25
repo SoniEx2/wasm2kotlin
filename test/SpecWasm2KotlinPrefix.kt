@@ -159,10 +159,10 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
       moduleRegistry.exportTable(name, "Z_table", this@Z_spectest::spectest_table);
       moduleRegistry.exportMemory(name, "Z_memory", this@Z_spectest::spectest_memory);
 
-      moduleRegistry.exportGlobal(name, "Z_global_i32Z_i", this@Z_spectest::spectest_global_i32);
-      moduleRegistry.exportGlobal(name, "Z_global_i64Z_j", this@Z_spectest::spectest_global_i64);
-      moduleRegistry.exportGlobal(name, "Z_global_f32Z_f", this@Z_spectest::spectest_global_f32);
-      moduleRegistry.exportGlobal(name, "Z_global_f64Z_d", this@Z_spectest::spectest_global_f64);
+      moduleRegistry.exportConstant(name, "Z_global_i32Z_i", this@Z_spectest::spectest_global_i32);
+      moduleRegistry.exportConstant(name, "Z_global_i64Z_j", this@Z_spectest::spectest_global_i64);
+      moduleRegistry.exportConstant(name, "Z_global_f32Z_f", this@Z_spectest::spectest_global_f32);
+      moduleRegistry.exportConstant(name, "Z_global_f64Z_d", this@Z_spectest::spectest_global_f64);
   }
 
   init {
@@ -174,6 +174,14 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
 
 // workaround for run_spec_tests being MethodTooLarge
 fun <R> runNoInline(f: () -> R): R = run { f() }
+
+fun <T> getGlobal(moduleRegistry: wasm_rt_impl.ModuleRegistry, modname: String, fieldname: String): T {
+    try {
+        return moduleRegistry.importGlobal<T>(modname, fieldname).get()
+    } catch (e: NullPointerException) {
+        return moduleRegistry.importConstant<T>(modname, fieldname).get()
+    }
+}
 
 fun main(args: Array<String>) {
     val moduleRegistry = wasm_rt_impl.ModuleRegistry()

@@ -38,6 +38,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <utility>
 
 #include "src/cast.h"
 #include "src/common.h"
@@ -45,6 +46,7 @@
 #include "src/literal.h"
 #include "src/stream.h"
 #include "src/string-view.h"
+#include "src/set-util.h"
 
 #define INDENT_SIZE 2
 
@@ -130,12 +132,85 @@ struct Newline {};
 struct OpenBrace {};
 struct CloseBrace {};
 
-struct StackValue {
-  std::string value;
+struct SideEffects {
+  std::set<std::string> updates_locals;
+  std::set<std::string> updates_globals;
+  bool updates_memory = false;
+  bool can_trap = false;
+
+  bool empty() const {
+    return !can_trap && !updates_memory && updates_locals.empty() && updates_globals.empty();
+  }
+
+  void clear() {
+    updates_locals.clear();
+    updates_globals.clear();
+    updates_memory = false;
+    can_trap = false;
+  }
+
+  SideEffects& operator|=(const SideEffects& rhs) {
+    updates_locals.insert(rhs.updates_locals.begin(), rhs.updates_locals.end());
+    updates_globals.insert(rhs.updates_globals.begin(), rhs.updates_globals.end());
+    updates_memory = updates_memory || rhs.updates_memory;
+    can_trap = can_trap || rhs.can_trap;
+    return *this;
+  }
+
+  friend SideEffects operator|(SideEffects lhs, const SideEffects& rhs) {
+    lhs |= rhs;
+    return lhs;
+  }
+};
+
+struct DependsOn {
   std::set<std::string> depends_locals;
   std::set<std::string> depends_globals;
   bool depends_memory = false;
+  //bool has_side_effects = false;
+
+  bool empty() const {
+    return !depends_memory && depends_locals.empty() && depends_globals.empty();
+  }
+
+  void clear() {
+    depends_locals.clear();
+    depends_globals.clear();
+    depends_memory = false;
+  }
+
+  DependsOn& operator|=(const DependsOn& rhs) {
+    depends_locals.insert(rhs.depends_locals.begin(), rhs.depends_locals.end());
+    depends_globals.insert(rhs.depends_globals.begin(), rhs.depends_globals.end());
+    depends_memory = depends_memory || rhs.depends_memory;
+    return *this;
+  }
+
+  friend DependsOn operator|(DependsOn lhs, const DependsOn& rhs) {
+    lhs |= rhs;
+    return lhs;
+  }
+};
+
+struct StackValue {
+  std::string value;
   uint8_t precedence = 0;
+  DependsOn depends_on;
+  SideEffects side_effects;
+
+  bool InvalidatedBy(const SideEffects& effects) const {
+    return (effects.can_trap && !side_effects.empty())
+        || (effects.updates_memory && depends_on.depends_memory)
+        || SetsOverlap(effects.updates_locals, depends_on.depends_locals)
+        || SetsOverlap(effects.updates_globals, depends_on.depends_globals);
+  }
+
+  bool RequiredFor(const DependsOn& requirements, const SideEffects& effects) const {
+    return (side_effects.can_trap && !effects.empty())
+        || (side_effects.updates_memory && requirements.depends_memory)
+        || SetsOverlap(side_effects.updates_locals, requirements.depends_locals)
+        || SetsOverlap(side_effects.updates_globals, requirements.depends_globals);
+  }
 };
 
 class KotlinWriter {
@@ -158,6 +233,7 @@ class KotlinWriter {
   typedef std::map<std::string, ExternalKind> ExtKindMap;
   typedef std::pair<Index, Type> StackTypePair;
   typedef std::map<StackTypePair, std::string> StackVarSymbolMap;
+  typedef std::map<Index, FuncDeclaration> CallIndirectDeclMap;
 
   void UseStream(Stream*);
 
@@ -170,14 +246,13 @@ class KotlinWriter {
   void PushTypes(const TypeVector&);
   void DropTypes(size_t count);
   void PushValue(StackValue);
+  const StackValue& GetValue(Index index = 0) const;
   void PushVar();
   StackValue PopValue();
+  std::vector<StackValue> PopValues(size_t count);
   void DropValue();
   void SpillValues(size_t preserve,
-                   const SymbolSet& depends_locals,
-                   const SymbolSet& depends_globals,
-                   bool depends_memory,
-                   bool is_block = false);
+                   DependsOn requirements, SideEffects effects);
 
   void PushLabel(LabelType,
                  const std::string& name,
@@ -210,6 +285,7 @@ class KotlinWriter {
   std::string DefineGlobalScopeName(const std::string&, ExternalKind);
   std::string DefineLocalScopeName(const std::string&);
   std::string DefineStackVarName(Index, Type, string_view);
+  void DefineCallIndirect(Index, const FuncDeclaration&);
 
   void Indent(int size = INDENT_SIZE);
   void Dedent(int size = INDENT_SIZE);
@@ -234,6 +310,8 @@ class KotlinWriter {
   void WriteValue(const Var&);
   void WriteValue(const LocalName&);
   void WriteValue(const GlobalName&);
+  void WriteValue(const StackVar&);
+  void WriteValue(const ExternalPtr&);
   void WriteValue(Type);
 
   template <typename T, typename U, typename... Args>
@@ -288,15 +366,16 @@ class KotlinWriter {
   void WriteParams(const std::vector<std::string>&, std::vector<std::string>&);
   void WriteLocals(const std::vector<std::string>&, const std::vector<std::string>&);
   void WriteStackVarDeclarations();
+  void WriteCallIndirectDefinitions();
   void Write(const ExprList&);
 
-  void WriteSimpleUnaryExpr(Type, const char* op);
+  void WriteSimpleUnaryExpr(Type, const char* op, bool can_trap = false);
   void WritePostfixUnaryExpr(Type, const char* op);
   void WriteInfixBinaryExpr(Opcode,
                             const char* op,
                             uint8_t precedence,
-                            bool = false);
-  void WritePrefixBinaryExpr(Opcode, const char* op);
+                            bool debooleanize = false);
+  void WritePrefixBinaryExpr(Opcode, const char* op, bool can_trap = false);
   void WriteUnsignedCompareExpr(Opcode, const char* op);
   void Write(const BinaryExpr&);
   void Write(const CompareExpr&);
@@ -323,6 +402,7 @@ class KotlinWriter {
   Result result_ = Result::Ok;
   int indent_ = 0;
   bool should_write_indent_next_ = false;
+  bool unreachable_ = false;
 
   TypeMap type_map_;
   ExtKindMap extkind_map_;
@@ -337,6 +417,7 @@ class KotlinWriter {
   TypeVector type_stack_;
   std::vector<Label> label_stack_;
   std::vector<StackValue> value_stack_;
+  CallIndirectDeclMap call_indirect_decl_map_;
 };
 
 static const char kImplicitFuncLabel[] = "$Bfunc";
@@ -378,6 +459,12 @@ void KotlinWriter::PushValue(StackValue value) {
   value_stack_.push_back(value);
 }
 
+const StackValue& KotlinWriter::GetValue(Index index) const {
+  assert(type_stack_.size() >= value_stack_.size());
+  assert(index < value_stack_.size());
+  return *(value_stack_.rbegin() + index);
+}
+
 void KotlinWriter::PushVar() {
   assert(type_stack_.size() > value_stack_.size());
   StackValue value;
@@ -391,48 +478,53 @@ void KotlinWriter::PushVar() {
     value.value = iter->second;
   }
   value.precedence = 0;
-  value.depends_memory = false;
   value_stack_.push_back(value);
 }
 
 
 StackValue KotlinWriter::PopValue() {
   assert(!value_stack_.empty());
-  StackValue ret = value_stack_.back();
+  StackValue ret = std::move(value_stack_.back());
   value_stack_.pop_back();
   return ret;
 }
 
+std::vector<StackValue> KotlinWriter::PopValues(size_t count) {
+  assert(value_stack_.size() >= count);
+  std::vector<StackValue> values(count);
+  std::move(value_stack_.end()-count, value_stack_.end(), values.begin());
+  value_stack_.erase(value_stack_.end()-count, value_stack_.end());
+  return values;
+}
+
 void KotlinWriter::SpillValues(size_t preserve_count,
-                   const SymbolSet& depends_locals,
-                   const SymbolSet& depends_globals,
-                   bool depends_memory,
-                   bool is_block) {
-  // function calls will pass depends_locals=empty, depends_globals=global_sym_map_, depends_memory=true
-  // memory writes will pass depends_locals=empty, depends_globals=empty, depends_memory=true
-  // global writes will pass depends_locals=empty, depends_globals=the_global, depends_memory=false
-  // local writes will pass depends_locals=the_local, depends_globals=empty, depends_memory=false
-  // globals are thread-local, locals are scope-local, so this is "safe"
+                   DependsOn requirements, SideEffects effects) {
+  // ~~function calls will pass updates_locals=empty, updates_globals=global_syms_, updates_memory=true, can_trap=true~~
+  // blocks will pass updates_locals=local_syms_, updates_globals=global_syms_, updates_memory=true, can_trap=true
+  // memory writes will pass updates_locals=empty, updates_globals=empty, updates_memory=true, can_trap=true
+  // global writes will pass updates_locals=empty, updates_globals=the_global, updates_memory=false, can_trap=false
+  // local writes will pass updates_locals=the_local, updates_globals=empty, updates_memory=false, can_trap=false
   // preserve_count values will be preserved
-  assert(depends_locals.size() <= 1 || depends_locals == local_syms_);
-  assert(depends_globals.size() <= 1 || depends_globals == global_syms_);
-  assert(value_stack_.size() == type_stack_.size());
-  assert(preserve_count <= value_stack_.size());
-  Index max = value_stack_.size() - preserve_count;
-  bool all_globals = depends_globals == global_syms_;
-  bool all_locals = depends_locals == local_syms_;
+  assert(value_stack_.size() <= type_stack_.size());
+  assert(preserve_count <= type_stack_.size());
+  Index max = std::min(value_stack_.size(), type_stack_.size() - preserve_count);
+  // *ideally* we'd use SSA form, but that's not gonna happen.
+  std::vector<bool> tospill(max);
+  //for (Index i = 0; i < max; ++i) {
+  //  StackValue& value = value_stack_[max-i-1];
+  //  if (tospill[max-i-1] = value.RequiredFor(requirements, effects)) {
+  //    requirements |= value.depends_on;
+  //    effects |= value.side_effects;
+  //  }
+  //}
   for (Index i = 0; i < max; ++i) {
     StackValue& value = value_stack_[i];
-    if (value.precedence == 0) {
-      continue;
-    }
-    bool do_spill = is_block
-                    || (depends_memory && value.depends_memory)
-                    || (all_globals && !value.depends_globals.empty())
-                    || (all_locals && !value.depends_locals.empty())
-                    || (!depends_locals.empty() && value.depends_locals.find(*depends_locals.begin()) != value.depends_locals.end())
-                    || (!depends_globals.empty() && value.depends_globals.find(*depends_globals.begin()) != value.depends_globals.end());
-    if (do_spill) {
+    tospill[i] = !value.depends_on.empty() || !value.side_effects.empty();
+  }
+  for (Index i = 0; i < max; ++i) {
+    if (tospill[i]) {
+      StackValue& value = value_stack_[i];
+      if (value.precedence == 0) continue;
       std::string thing;
       Type type = type_stack_[i];
       StackTypePair stp = {i, type};
@@ -444,9 +536,8 @@ void KotlinWriter::SpillValues(size_t preserve_count,
         thing = iter->second;
       }
       std::swap(value.value, thing);
-      value.depends_locals.clear();
-      value.depends_globals.clear();
-      value.depends_memory = false;
+      value.depends_on.clear();
+      value.side_effects.clear();
       value.precedence = 0;
       Write(value.value, " = ", thing, ";", Newline());
     }
@@ -656,6 +747,13 @@ std::string KotlinWriter::DefineStackVarName(Index index,
   return unique;
 }
 
+void KotlinWriter::DefineCallIndirect(Index index, const FuncDeclaration& decl) {
+  if (call_indirect_decl_map_.find(index) != call_indirect_decl_map_.end()) {
+    return;
+  }
+  call_indirect_decl_map_.insert(CallIndirectDeclMap::value_type(index, decl));
+}
+
 void KotlinWriter::Indent(int size) {
   indent_ += size;
 }
@@ -769,6 +867,10 @@ void KotlinWriter::Write(const ExternalPtr& name) {
   Write(AddressOf(GetGlobalName(name.name), class_name_));
 }
 
+void KotlinWriter::WriteValue(const ExternalPtr& name) {
+  WriteValue(AddressOf(GetGlobalName(name.name), class_name_));
+}
+
 void KotlinWriter::Write(const Var& var) {
   assert(var.is_name());
   Write(LocalName(var.name()));
@@ -783,14 +885,17 @@ void KotlinWriter::WriteValue(const Var& var) {
 void KotlinWriter::Write(const GotoLabel& goto_label) {
   const Label* label = FindLabel(goto_label.var);
   if (label->HasValue()) {
-    assert(label->sig.size() == 1);
+    size_t amount = label->sig.size();
     assert(type_stack_.size() >= label->type_stack_size);
-    Index dst = type_stack_.size() - label->type_stack_size - 1;
-    StackValue sv = PopValue();
-    if (sv.precedence != 0 || dst != 0) {
-      Write(StackVar(dst, label->sig[0]), " = ", sv.value, "; ");
+    assert(type_stack_.size() >= amount);
+    assert(type_stack_.size() - amount >= label->type_stack_size);
+    Index offset = type_stack_.size() - label->type_stack_size - amount;
+    for (Index i = 0; i < amount; ++i) {
+      const StackValue& sv = GetValue(amount - i - 1);
+      if (sv.precedence != 0 || offset != 0) {
+        Write(StackVar(amount - i - 1 + offset, label->sig[i]), " = ", sv.value, "; ");
+      }
     }
-    PushValue(sv);
   }
 
   if (goto_label.var.is_name()) {
@@ -825,6 +930,24 @@ void KotlinWriter::Write(const GlobalVar& var) {
 void KotlinWriter::WriteValue(const GlobalVar& var) {
   assert(var.var.is_name());
   WriteValue(GetGlobalName(var.var.name()));
+}
+
+void KotlinWriter::WriteValue(const StackVar& sv) {
+  Index index = type_stack_.size() - 1 - sv.index;
+  Type type = sv.type;
+  if (type == Type::Any) {
+    assert(index < type_stack_.size());
+    type = type_stack_[index];
+  }
+
+  StackTypePair stp = {index, type};
+  auto iter = stack_var_sym_map_.find(stp);
+  if (iter == stack_var_sym_map_.end()) {
+    std::string name = MangleType(type) + std::to_string(index);
+    WriteValue(DefineStackVarName(index, type, name));
+  } else {
+    WriteValue(iter->second);
+  }
 }
 
 void KotlinWriter::Write(const StackVar& sv) {
@@ -879,7 +1002,9 @@ void KotlinWriter::Write(TypeEnum type) {
 }
 
 void KotlinWriter::Write(const ResultType& rt) {
-  if (!rt.types.empty()) {
+  if (rt.types.size() > 1) {
+    UNIMPLEMENTED("multi-value");
+  } else if (!rt.types.empty()) {
     Write(rt.types[0]);
   } else {
     Write("Unit");
@@ -1161,12 +1286,13 @@ void KotlinWriter::WriteImports() {
   for (const Import* import : module_->imports) {
     Write("/* import: '", import->module_name, "' '", import->field_name,
           "' */", Newline());
-    Write("private var ");
+    Write("private ");
     std::string mangled;
     const char *type;
     bool delegate = true;
     switch (import->kind()) {
       case ExternalKind::Func: {
+        Write("val ");
         const Func& func = cast<FuncImport>(import)->func;
         mangled = MangleFuncName(
                                       import->field_name,
@@ -1184,16 +1310,23 @@ void KotlinWriter::WriteImports() {
 
       case ExternalKind::Global: {
         const Global& global = cast<GlobalImport>(import)->global;
+        if (global.mutable_) {
+          Write("var ");
+          type = "Global";
+        } else {
+          Write("val ");
+          type = "Constant";
+        }
         mangled = MangleGlobalName(import->field_name, global.type);
         WriteGlobal(global,
                     DefineImportName(
                         global.name, import->module_name,
                         mangled, global.type));
-        type = "Global";
         break;
       }
 
       case ExternalKind::Memory: {
+        Write("var ");
         const Memory& memory = cast<MemoryImport>(import)->memory;
         mangled = MangleName(import->field_name);
         WriteMemory(DefineImportName(memory.name, import->module_name,
@@ -1203,6 +1336,7 @@ void KotlinWriter::WriteImports() {
       }
 
       case ExternalKind::Table: {
+        Write("var ");
         const Table& table = cast<TableImport>(import)->table;
         mangled = MangleName(import->field_name);
         WriteTable(DefineImportName(table.name, import->module_name,
@@ -1253,7 +1387,12 @@ void KotlinWriter::WriteGlobals() {
     for (const Global* global : module_->globals) {
       bool is_import = global_index < module_->num_global_imports;
       if (!is_import) {
-        Write("private var ");
+        Write("private ");
+        if (global->mutable_) {
+          Write("var ");
+        } else {
+          Write("val ");
+        }
         WriteGlobal(*global, DefineGlobalScopeName(global->name, global->type));
         Write(";", Newline());
       }
@@ -1460,7 +1599,11 @@ void KotlinWriter::WriteExports() {
         mangled_name =
             ExportName(MangleGlobalName(export_->name, global->type));
         internal_name = global->name;
-        type = "Global";
+        if (global->mutable_) {
+          type = "Global";
+        } else {
+          type = "Constant";
+        }
         break;
       }
 
@@ -1544,23 +1687,30 @@ void KotlinWriter::Write(const Func& func) {
   PushLabel(LabelType::Func, empty, func.decl.sig);
   Write(LabelDecl(label), "do ", OpenBrace());
   Write(func.exprs);
-  //if (func.GetNumResults() > 0 && IsConst(0)) {
-  //  Const const_ = PopConst();
-  //  Write(StackVar(0, const_.type()), " = ", const_, ";", Newline());
-  //}
-  SpillValues(0, local_syms_, global_syms_, true, true);
+  std::vector<StackValue> return_values;
+  if (!unreachable_) {
+    return_values = PopValues(func.GetNumResults());
+    for (const StackValue& value : return_values) {
+      // we're gonna drop these below but this is easier than working with indices.
+      PushVar();
+      // these must be spilled because they're part of a label target.
+      Write(GetValue().value, " = ", value.value, Newline());
+    }
+  }
+  unreachable_ = false;
   while (value_stack_.size() > 0) {
     DropValue();
   }
-  Write(CloseBrace(), " while (false);", Newline());
   PopLabel();
   ResetTypeStack(0);
   PushTypes(func.decl.sig.result_types);
   while (value_stack_.size() < type_stack_.size()) {
     PushVar();
   }
+  Write(CloseBrace(), " while (false);", Newline());
 
   if (!func.decl.sig.result_types.empty()) {
+    // TODO multi-value
     // Return the top of the stack implicitly.
     Write("return ", StackVar(0), ";", Newline());
   }
@@ -1600,7 +1750,7 @@ void KotlinWriter::WriteParams(const std::vector<std::string>& index_to_name, st
 
 void KotlinWriter::WriteLocals(const std::vector<std::string>& index_to_name, const std::vector<std::string>& to_shadow) {
   if (!to_shadow.empty()) {
-    for (auto param : to_shadow) {
+    for (const auto& param : to_shadow) {
       Write("var ", param, " = ", param, ";", Newline());
     }
   }
@@ -1622,6 +1772,41 @@ void KotlinWriter::WriteLocals(const std::vector<std::string>& index_to_name, co
     }
   }
 }
+
+void KotlinWriter::WriteCallIndirectDefinitions() {
+  for (const auto& pair : call_indirect_decl_map_) {
+    Index index = pair.first;
+    const FuncDeclaration& decl = pair.second;
+    Writef("inline private fun CALL_INDIRECT_%u(w2k_table: wasm_rt_impl.Table, ", index);
+    if (decl.GetNumParams() != 0) {
+      Indent(4);
+      for (Index i = 0; i < decl.GetNumParams(); ++i) {
+        if (i != 0) {
+          Write(", ");
+          if ((i % 8) == 0)
+            Write(Newline());
+        }
+        Writef("w2k_p%u", i);
+        Write(": ", decl.GetParamType(i));
+      }
+      Write(", w2k_index: Int");
+      Dedent(4);
+    } else {
+      Write("w2k_index: Int");
+    }
+    Write("): ", ResultType(decl.sig.result_types), OpenBrace());
+    Write("return wasm_rt_impl.CALL_INDIRECT<");
+    WriteFuncType(decl);
+    Write(">(w2k_table, func_types[");
+    Write(index, "], w2k_index)(");
+    for (Index i = 0; i < decl.GetNumParams(); ++i) {
+      Writef("w2k_p%u, ", i);
+    }
+    Write(")", Newline());
+    Write(CloseBrace(), Newline());
+  }
+}
+
 
 void KotlinWriter::WriteStackVarDeclarations() {
   for (Type type : {Type::I32, Type::I64, Type::F32, Type::F64}) {
@@ -1651,10 +1836,11 @@ void KotlinWriter::WriteStackVarDeclarations() {
 }
 
 void KotlinWriter::DropValue() {
-  // as it turns out these can trap, which is, in fact, a side-effect!
   StackValue sv = PopValue();
-  // ...unless it's already been spilled or is a local/global
-  if (sv.precedence > 1) Write(sv.value, ";", Newline());
+  if (!sv.side_effects.empty()) {
+    SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+    Write(sv.value, ";", Newline());
+  }
 }
 
 void KotlinWriter::Write(const ExprList& exprs) {
@@ -1667,43 +1853,67 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::Block: {
         const Block& block = cast<BlockExpr>(&expr)->block;
         std::string label = DefineLocalScopeName(block.label);
+        std::vector<StackValue> input_values = PopValues(block.decl.GetNumParams());
+        DropTypes(block.decl.GetNumParams());
+        SideEffects updating;
+        DependsOn depends_on;
+        SpillValues(0, std::move(depends_on), std::move(updating));
         size_t mark = MarkTypeStack();
         PushLabel(LabelType::Block, block.label, block.decl.sig);
-        SpillValues(0, local_syms_, global_syms_, true, true);
+        PushTypes(block.decl.sig.param_types);
+        for (StackValue& value : input_values) {
+          PushValue(std::move(value));
+        }
         Write(LabelDecl(label), "do ", OpenBrace());
         Write(block.exprs);
-        if (value_stack_.size() > mark) {
-          SpillValues(0, local_syms_, global_syms_, true, true);
-          while (value_stack_.size() > mark) {
-            DropValue();
+        if (!unreachable_) {
+          std::vector<StackValue> output_values = PopValues(block.decl.GetNumResults());
+          for (const StackValue& value : output_values) {
+            // we're gonna drop these below but this is easier than working with indices.
+            PushVar();
+            // these must be spilled because they're part of a label target.
+            Write(GetValue().value, " = ", value.value, Newline());
           }
         }
-        Write(CloseBrace(), " while (false);", Newline());
+        unreachable_ = false;
+        while (value_stack_.size() > mark) {
+          DropValue();
+        }
         ResetTypeStack(mark);
         PopLabel();
         PushTypes(block.decl.sig.result_types);
         while (value_stack_.size() < type_stack_.size()) {
           PushVar();
         }
+        Write(CloseBrace(), " while (false);", Newline());
         break;
       }
 
-      case ExprType::Br:
-        Write(GotoLabel(cast<BrExpr>(&expr)->var), Newline());
+      case ExprType::Br: {
+        const Var& var = cast<BrExpr>(&expr)->var;
+        const Label* label = FindLabel(var);
+        Write(GotoLabel(var), Newline());
+        PopValues(label->sig.size());
         // Stop processing this ExprList, since the following are unreachable.
+        unreachable_ = true;
         return;
+      }
 
-      case ExprType::BrIf:
-        Write("if ((", PopValue().value, ").inz()) {");
+      case ExprType::BrIf: {
+        StackValue sv = PopValue();
         DropTypes(1);
+        SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+        Write("if ((", sv.value, ").inz()) {");
         Write(GotoLabel(cast<BrIfExpr>(&expr)->var), "}", Newline());
         break;
+      }
 
       case ExprType::BrTable: {
         const auto* bt_expr = cast<BrTableExpr>(&expr);
-        SpillValues(1, local_syms_, global_syms_, true, true);
-        Write("when (", PopValue().value, ") ", OpenBrace());
+        StackValue sv = PopValue();
         DropTypes(1);
+        SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+        Write("when (", sv.value, ") ", OpenBrace());
         Index i = 0;
         for (const Var& var : bt_expr->targets) {
           Write(i++, " -> ", OpenBrace(), GotoLabel(var), CloseBrace(), Newline());
@@ -1712,6 +1922,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Write(GotoLabel(bt_expr->default_target), CloseBrace(), Newline(), CloseBrace(),
               Newline());
         // Stop processing this ExprList, since the following are unreachable.
+        unreachable_ = true;
         return;
       }
 
@@ -1721,27 +1932,34 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Index num_params = func.GetNumParams();
         Index num_results = func.GetNumResults();
         assert(type_stack_.size() >= num_params);
-        SymbolSet depends_locals;
-        SpillValues(num_params, depends_locals, global_syms_, true);
-        if (num_results > 0) {
-          assert(num_results == 1);
-          Write(StackVar(num_params - 1, func.GetResultType(0)), " = ");
-        }
-
-        Write(GlobalName(var.name()), "(");
-        std::vector<std::string> args;
-        for (Index i = 0; i < num_params; ++i) {
-          args.push_back(PopValue().value);
-        }
-        for (Index i = 0; i < num_params; ++i) {
-          Write(args.back(), ", ");
-          args.pop_back();
-        }
-        Write(");", Newline());
+        assert(num_results <= 1);
+        std::vector<StackValue> args = PopValues(num_params);
         DropTypes(num_params);
+        StackValue sv;
+        sv.precedence = 2;
+        for (const StackValue& arg : args) {
+          sv.depends_on |= arg.depends_on;
+          sv.side_effects |= arg.side_effects;
+        }
+        sv.side_effects.updates_globals = global_syms_;
+        sv.side_effects.updates_memory = true;
+        sv.side_effects.can_trap = true;
+        PushValue(sv);
+
+        WriteValue(GlobalName(var.name()), "(");
+        for (Index i = 0; i < num_params; ++i) {
+          WriteValue(args[i].value, ", ");
+        }
+        WriteValue(")");
         PushTypes(func.decl.sig.result_types);
+        for (Index i = 1; i < num_results; ++i) {
+          WriteValue(".let {", StackVar(num_results-i-1), "=it.first;it.second}");
+        }
         while (value_stack_.size() < type_stack_.size()) {
           PushVar();
+        }
+        if (num_results == 0) {
+          DropValue();
         }
         break;
       }
@@ -1751,12 +1969,23 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Index num_params = decl.GetNumParams();
         Index num_results = decl.GetNumResults();
         assert(type_stack_.size() > num_params);
-        SymbolSet depends_locals;
-        SpillValues(num_params + 1, depends_locals, global_syms_, true);
-        if (num_results > 0) {
-          assert(num_results == 1);
-          Write(StackVar(num_params, decl.GetResultType(0)), " = ");
+        assert(num_results <= 1);
+        StackValue tabkey = PopValue();
+        DropTypes(1);
+        std::vector<StackValue> args = PopValues(num_params);
+        DropTypes(num_params);
+        StackValue sv;
+        sv.precedence = 2;
+        sv.depends_on |= tabkey.depends_on;
+        sv.side_effects |= tabkey.side_effects;
+        for (const StackValue& arg : args) {
+          sv.depends_on |= arg.depends_on;
+          sv.side_effects |= arg.side_effects;
         }
+        sv.side_effects.updates_globals = global_syms_;
+        sv.side_effects.updates_memory = true;
+        sv.side_effects.can_trap = true;
+        PushValue(sv);
 
         assert(module_->tables.size() == 1);
         const Table* table = module_->tables[0];
@@ -1764,24 +1993,58 @@ void KotlinWriter::Write(const ExprList& exprs) {
         assert(decl.has_func_type);
         Index func_type_index = module_->GetFuncTypeIndex(decl.type_var);
 
-        Write("wasm_rt_impl.CALL_INDIRECT<");
-        WriteFuncType(decl);
-        Write(">(", GetGlobalName(table->name), ", func_types[");
-        Write(func_type_index, "], ", PopValue().value, ")(");
-        std::vector<std::string> args;
+        // TODO(Soni) emit "inline private fun CALL_INDIRECT_[TypeIndex](args, index)" for correctness.
+        DefineCallIndirect(func_type_index, decl);
+        WriteValue("CALL_INDIRECT_");
+        WriteValuef("%u", func_type_index);
+        WriteValue("(", GetGlobalName(table->name));
+        WriteValue(", ");
         for (Index i = 0; i < num_params; ++i) {
-          args.push_back(PopValue().value);
+          WriteValue(args[i].value, ", ");
         }
-        for (Index i = 0; i < num_params; ++i) {
-          Write(args.back(), ", ");
-          args.pop_back();
-        }
-        Write(");", Newline());
-        DropTypes(num_params + 1);
+        WriteValue(tabkey.value, ")");
         PushTypes(decl.sig.result_types);
+        for (Index i = 1; i < num_results; ++i) {
+          WriteValue(".let{", StackVar(num_results-i-1), "=it.first;it.second}");
+        }
         while (value_stack_.size() < type_stack_.size()) {
           PushVar();
         }
+        if (num_results == 0) {
+          DropValue();
+        }
+
+        // TODO remove
+        //SpillValues(num_params + 1, depends_locals, global_syms_, true);
+        //if (num_results > 0) {
+        //  assert(num_results == 1);
+        //  Write(StackVar(num_params, decl.GetResultType(0)), " = ");
+        //}
+
+        //assert(module_->tables.size() == 1);
+        //const Table* table = module_->tables[0];
+
+        //assert(decl.has_func_type);
+        //Index func_type_index = module_->GetFuncTypeIndex(decl.type_var);
+
+        //Write("wasm_rt_impl.CALL_INDIRECT<");
+        //WriteFuncType(decl);
+        //Write(">(", GetGlobalName(table->name), ", func_types[");
+        //Write(func_type_index, "], ", PopValue().value, ")(");
+        //std::vector<std::string> args;
+        //for (Index i = 0; i < num_params; ++i) {
+        //  args.push_back(PopValue().value);
+        //}
+        //for (Index i = 0; i < num_params; ++i) {
+        //  Write(args.back(), ", ");
+        //  args.pop_back();
+        //}
+        //Write(");", Newline());
+        //DropTypes(num_params + 1);
+        //PushTypes(decl.sig.result_types);
+        //while (value_stack_.size() < type_stack_.size()) {
+        //  PushVar();
+        //}
         break;
       }
 
@@ -1813,7 +2076,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         PushType(module_->GetGlobal(var)->type);
         StackValue sv;
         sv.precedence = 1;
-        sv.depends_globals.insert(var.name());
+        sv.depends_on.depends_globals.insert(var.name());
         PushValue(sv);
         WriteValue(GlobalVar(var));
         break;
@@ -1822,45 +2085,63 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::GlobalSet: {
         const Var& var = cast<GlobalSetExpr>(&expr)->var;
         assert(var.is_name());
-        SymbolSet depends_locals;
-        SymbolSet depends_globals { var.name() };
-        SpillValues(1, depends_locals, depends_globals, false);
         StackValue sv = PopValue();
-        Write(GlobalVar(var), " = ", sv.value, ";", Newline());
+        sv.side_effects.updates_globals.insert(var.name());
         DropTypes(1);
+        SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+        Write(GlobalVar(var), " = ", sv.value, ";", Newline());
         break;
       }
 
       case ExprType::If: {
         const IfExpr& if_ = *cast<IfExpr>(&expr);
         std::string label = DefineLocalScopeName(if_.true_.label);
-        // spill everything before block.
-        SpillValues(1, local_syms_, global_syms_, true, true);
-        // FIXME(Soni) put the block INSIDE the if.
-        Write(LabelDecl(label), "do ", OpenBrace());
-        Write("if ((", PopValue().value, ").inz()) ", OpenBrace());
+        StackValue cond = PopValue();
         DropTypes(1);
+        std::vector<StackValue> args = PopValues(if_.true_.decl.GetNumParams());
+        DropTypes(args.size());
+        SpillValues(0, std::move(cond.depends_on), std::move(cond.side_effects));
         size_t mark = MarkTypeStack();
         PushLabel(LabelType::If, if_.true_.label, if_.true_.decl.sig);
+        PushTypes(if_.true_.decl.sig.param_types);
+        for (const StackValue& arg : args) {
+          PushValue(arg);
+        }
+        Write(LabelDecl(label), "do ", OpenBrace());
+        Write("if ((", cond.value, ").inz()) ", OpenBrace());
         Write(if_.true_.exprs);
         if (!if_.false_.empty()) {
-          if (value_stack_.size() > mark) {
-            // FIXME(Soni) this is lazy and not very efficient.
-            SpillValues(0, local_syms_, global_syms_, true, true);
-            while (value_stack_.size() > mark) {
-              DropValue();
+          if (!unreachable_) {
+            std::vector<StackValue> output_values = PopValues(if_.true_.decl.GetNumResults());
+            for (const StackValue& value : output_values) {
+              // we're gonna drop these below but this is easier than working with indices.
+              PushVar();
+              Write(GetValue().value, " = ", value.value, Newline());
             }
           }
-          Write(CloseBrace());
-          ResetTypeStack(mark);
-          Write(" else ", OpenBrace(), if_.false_);
-        }
-        if (value_stack_.size() > mark) {
-          // FIXME(Soni) this is lazy and not very efficient.
-          SpillValues(0, local_syms_, global_syms_, true, true);
+          unreachable_ = false;
           while (value_stack_.size() > mark) {
             DropValue();
           }
+          Write(CloseBrace());
+          ResetTypeStack(mark);
+          PushTypes(if_.true_.decl.sig.param_types);
+          for (StackValue& arg : args) {
+            PushValue(std::move(arg));
+          }
+          Write(" else ", OpenBrace(), if_.false_);
+        }
+        if (!unreachable_) {
+          std::vector<StackValue> output_values = PopValues(if_.true_.decl.GetNumResults());
+          for (const StackValue& value : output_values) {
+            // we're gonna drop these below but this is easier than working with indices.
+            PushVar();
+            Write(GetValue().value, " = ", value.value, Newline());
+          }
+        }
+        unreachable_ = false;
+        while (value_stack_.size() > mark) {
+          DropValue();
         }
         Write(CloseBrace());
         Write(CloseBrace(), " while (false);");
@@ -1883,7 +2164,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         PushType(func_->GetLocalType(var));
         StackValue sv;
         sv.precedence = 1;
-        sv.depends_locals.insert(var.name());
+        sv.depends_on.depends_locals.insert(var.name());
         PushValue(sv);
         WriteValue(var);
         break;
@@ -1892,28 +2173,23 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::LocalSet: {
         const Var& var = cast<LocalSetExpr>(&expr)->var;
         assert(var.is_name());
-        SymbolSet depends_locals { var.name() };
-        SymbolSet depends_globals;
-        SpillValues(1, depends_locals, depends_globals, false);
         StackValue sv = PopValue();
-        Write(var, " = ", sv.value, ";", Newline());
+        sv.side_effects.updates_locals.insert(var.name());
         DropTypes(1);
+        SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+        Write(var, " = ", sv.value, ";", Newline());
         break;
       }
 
       case ExprType::LocalTee: {
         const Var& var = cast<LocalTeeExpr>(&expr)->var;
         assert(var.is_name());
-        SymbolSet depends_locals { var.name() };
-        SymbolSet depends_globals;
-        SpillValues(1, depends_locals, depends_globals, false);
         StackValue sv = PopValue();
-        Write(var, " = ", sv.value, ";", Newline());
-        StackValue new_sv;
-        new_sv.precedence = 1;
-        new_sv.depends_locals.insert(var.name());
-        PushValue(new_sv);
-        WriteValue(var);
+        sv.side_effects.updates_locals.insert(var.name());
+        sv.value = ("(" + sv.value) + ").also ";
+        sv.precedence = 2;
+        PushValue(sv);
+        WriteValue("{ ", var, " = it }");
         break;
       }
 
@@ -1921,20 +2197,35 @@ void KotlinWriter::Write(const ExprList& exprs) {
         const Block& block = cast<LoopExpr>(&expr)->block;
         if (!block.exprs.empty()) {
           std::string label = DefineLocalScopeName(block.label);
-          SpillValues(0, local_syms_, global_syms_, true, true);
-          Write(LabelDecl(label), "while (true) ", OpenBrace());
+          std::vector<StackValue> input_values = PopValues(block.decl.GetNumParams());
+          DropTypes(block.decl.GetNumParams());
+          SideEffects updating;
+          DependsOn depends_on;
+          SpillValues(0, std::move(depends_on), std::move(updating));
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
+          PushTypes(block.decl.sig.param_types);
+          // these must be spilled because they're part of a label target.
+          for (const StackValue& value : input_values) {
+            PushVar();
+            Write(GetValue().value, " = ", value.value, Newline());
+          }
+          Write(LabelDecl(label), "while (true) ", OpenBrace());
           Write(block.exprs);
-          if (value_stack_.size() > mark) {
-            SpillValues(0, local_syms_, global_syms_, true, true);
-            while (value_stack_.size() > mark) {
-              DropValue();
-            }
+          std::vector<StackValue> output_values;
+          if (!unreachable_) {
+            output_values = PopValues(block.decl.GetNumResults());
+          }
+          unreachable_ = false;
+          while (value_stack_.size() > mark) {
+            DropValue();
           }
           ResetTypeStack(mark);
           PopLabel();
           PushTypes(block.decl.sig.result_types);
+          for (StackValue& value : output_values) {
+            PushValue(std::move(value));
+          }
           while (value_stack_.size() < type_stack_.size()) {
             PushVar();
           }
@@ -1965,17 +2256,18 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::MemoryGrow: {
         assert(module_->memories.size() == 1);
         Memory* memory = module_->memories[0];
-        SymbolSet depends_locals;
-        SymbolSet depends_globals;
-        // spill memory accesses
-        SpillValues(0, depends_locals, depends_globals, true);
 
         assert(StackType(0) == Type::I32);
-        Write(StackVar(0, Type::I32), " = wasm_rt_impl.grow_memory(", ExternalPtr(memory->name),
-              ", ", PopValue().value, ");", Newline());
+        StackValue sv = PopValue();
         DropTypes(1);
+        sv.precedence = 2;
+        sv.side_effects.updates_memory = true;
+        std::string oldvalue;
+        std::swap(oldvalue, sv.value);
         PushType(Type::I32);
-        PushVar();
+        PushValue(sv);
+        WriteValue("wasm_rt_impl.grow_memory(", ExternalPtr(memory->name),
+              ", ", oldvalue, ")");
         break;
       }
 
@@ -1986,7 +2278,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         PushType(Type::I32);
         StackValue sv;
         sv.precedence = 2;
-        sv.depends_memory = true;
+        sv.depends_on.depends_memory = true;
         PushValue(sv);
         WriteValue(GetGlobalName(memory->name), ".pages");
         break;
@@ -2000,29 +2292,25 @@ void KotlinWriter::Write(const ExprList& exprs) {
         // cleanup code in one place.
         Write(GotoLabel(Var(label_stack_.size() - 1)), Newline());
         // Stop processing this ExprList, since the following are unreachable.
+        unreachable_ = true;
         return;
 
       case ExprType::Select: {
         Type type = StackType(1);
-        // do we have to spill everything due to order of evaluation?
-        //SpillValues(0, local_syms_, global_syms_, true, true);
+        // order matters
         StackValue first = PopValue();
         StackValue second = PopValue();
         StackValue third = PopValue();
-        //Write(StackVar(2), " = if ((", first.value, ").inz()) (", third.value, ") else (",
-        //      second.value, ");", Newline());
         DropTypes(3);
         PushType(type);
-        //PushVar();
         StackValue sv;
         sv.precedence = 1;
-        sv.depends_locals.insert(first.depends_locals.begin(), first.depends_locals.end());
-        sv.depends_locals.insert(second.depends_locals.begin(), second.depends_locals.end());
-        sv.depends_locals.insert(third.depends_locals.begin(), third.depends_locals.end());
-        sv.depends_globals.insert(first.depends_globals.begin(), first.depends_globals.end());
-        sv.depends_globals.insert(second.depends_globals.begin(), second.depends_globals.end());
-        sv.depends_globals.insert(third.depends_globals.begin(), third.depends_globals.end());
-        sv.depends_memory = first.depends_memory | second.depends_memory | third.depends_memory;
+        sv.depends_on |= first.depends_on;
+        sv.depends_on |= second.depends_on;
+        sv.depends_on |= third.depends_on;
+        sv.side_effects |= first.side_effects;
+        sv.side_effects |= second.side_effects;
+        sv.side_effects |= third.side_effects;
         PushValue(sv);
         WriteValue("select(", third.value, ", ", second.value, ", ", first.value, ")");
         break;
@@ -2069,6 +2357,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         break;
 
       case ExprType::Unreachable:
+        unreachable_ = true;
         Write("throw wasm_rt_impl.UnreachableException(\"unreachable\");", Newline());
         return;
 
@@ -2090,12 +2379,13 @@ void KotlinWriter::Write(const ExprList& exprs) {
   }
 }
 
-void KotlinWriter::WriteSimpleUnaryExpr(Type result_type, const char* op) {
+void KotlinWriter::WriteSimpleUnaryExpr(Type result_type, const char* op, bool can_trap) {
   StackValue sv = PopValue();
   DropTypes(1);
   PushType(result_type);
   sv.value = op + ("(" + sv.value) + ")";
   sv.precedence = 3;
+  sv.side_effects.can_trap = sv.side_effects.can_trap || can_trap;
   PushValue(sv);
 }
 
@@ -2125,9 +2415,8 @@ void KotlinWriter::WriteInfixBinaryExpr(Opcode opcode,
   }
   sv_left.value = sv_left.value + " " + op + " " + sv_right.value;
   sv_left.precedence = precedence;
-  sv_left.depends_locals.insert(sv_right.depends_locals.begin(), sv_right.depends_locals.end());
-  sv_left.depends_globals.insert(sv_right.depends_globals.begin(), sv_right.depends_globals.end());
-  sv_left.depends_memory |= sv_right.depends_memory;
+  sv_left.depends_on |= sv_right.depends_on;
+  sv_left.side_effects |= sv_right.side_effects;
   if (debooleanize) {
     sv_left.precedence = 2;
     sv_left.value = ("(" + sv_left.value) + ")";
@@ -2138,7 +2427,7 @@ void KotlinWriter::WriteInfixBinaryExpr(Opcode opcode,
   }
 }
 
-void KotlinWriter::WritePrefixBinaryExpr(Opcode opcode, const char* op) {
+void KotlinWriter::WritePrefixBinaryExpr(Opcode opcode, const char* op, bool can_trap) {
   Type result_type = opcode.GetResultType();
   StackValue sv_right = PopValue();
   StackValue sv_left = PopValue();
@@ -2146,9 +2435,9 @@ void KotlinWriter::WritePrefixBinaryExpr(Opcode opcode, const char* op) {
   PushType(result_type);
   sv_left.value = op + ("(" + sv_left.value) + ", " + sv_right.value + ")";
   sv_left.precedence = 2;
-  sv_left.depends_locals.insert(sv_right.depends_locals.begin(), sv_right.depends_locals.end());
-  sv_left.depends_globals.insert(sv_right.depends_globals.begin(), sv_right.depends_globals.end());
-  sv_left.depends_memory |= sv_right.depends_memory;
+  sv_left.depends_on |= sv_right.depends_on;
+  sv_left.side_effects |= sv_right.side_effects;
+  sv_left.side_effects.can_trap = sv_left.side_effects.can_trap || can_trap;
   PushValue(sv_left);
 }
 
@@ -2169,9 +2458,8 @@ void KotlinWriter::WriteUnsignedCompareExpr(Opcode opcode, const char* op) {
   DropTypes(2);
   PushType(result_type);
   sv_left.precedence = 2;
-  sv_left.depends_locals.insert(sv_right.depends_locals.begin(), sv_right.depends_locals.end());
-  sv_left.depends_globals.insert(sv_right.depends_globals.begin(), sv_right.depends_globals.end());
-  sv_left.depends_memory |= sv_right.depends_memory;
+  sv_left.depends_on |= sv_right.depends_on;
+  sv_left.side_effects |= sv_right.side_effects;
   std::string oldleft;
   std::swap(oldleft, sv_left.value);
   PushValue(sv_left);
@@ -2202,16 +2490,16 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
       break;
 
     case Opcode::I32DivS:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I32_DIV_S");
+      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I32_DIV_S", true);
       break;
 
     case Opcode::I64DivS:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I64_DIV_S");
+      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I64_DIV_S", true);
       break;
 
     case Opcode::I32DivU:
     case Opcode::I64DivU:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.DIV_U");
+      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.DIV_U", true);
       break;
 
     case Opcode::F32Div:
@@ -2220,16 +2508,16 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
       break;
 
     case Opcode::I32RemS:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I32_REM_S");
+      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I32_REM_S", true);
       break;
 
     case Opcode::I64RemS:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I64_REM_S");
+      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I64_REM_S", true);
       break;
 
     case Opcode::I32RemU:
     case Opcode::I64RemU:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.REM_U");
+      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.REM_U", true);
       break;
 
     case Opcode::I32And:
@@ -2399,35 +2687,35 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
       break;
 
     case Opcode::I32TruncF32S:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_S_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_S_F32", true);
       break;
 
     case Opcode::I64TruncF32S:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_S_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_S_F32", true);
       break;
 
     case Opcode::I32TruncF64S:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_S_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_S_F64", true);
       break;
 
     case Opcode::I64TruncF64S:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_S_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_S_F64", true);
       break;
 
     case Opcode::I32TruncF32U:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_U_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_U_F32", true);
       break;
 
     case Opcode::I64TruncF32U:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_U_F32");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_U_F32", true);
       break;
 
     case Opcode::I32TruncF64U:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_U_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I32_TRUNC_U_F64", true);
       break;
 
     case Opcode::I64TruncF64U:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_U_F64");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.I64_TRUNC_U_F64", true);
       break;
 
     case Opcode::I32TruncSatF32S:
@@ -2543,7 +2831,8 @@ void KotlinWriter::Write(const LoadExpr& expr) {
   std::string pos;
   std::swap(sv.value, pos);
   sv.precedence = 2;
-  sv.depends_memory = true;
+  sv.depends_on.depends_memory = true;
+  sv.side_effects.can_trap = true;
   PushValue(sv);
   WriteValue(GlobalName(memory->name), ".", func, "(", pos);
   if (expr.offset != 0)
@@ -2576,12 +2865,12 @@ void KotlinWriter::Write(const StoreExpr& expr) {
   assert(module_->memories.size() == 1);
   Memory* memory = module_->memories[0];
 
-  SymbolSet depends_locals;
-  SymbolSet depends_globals;
-  SpillValues(2, depends_locals, depends_globals, true);
   StackValue sv_right = PopValue();
   StackValue sv_left = PopValue();
+  sv_left.depends_on |= sv_right.depends_on;
+  sv_left.side_effects |= sv_right.side_effects;
   DropTypes(2);
+  SpillValues(0, std::move(sv_left.depends_on), std::move(sv_left.side_effects));
   Write(GlobalName(memory->name), ".", func, "(",
         sv_left.value);
   if (expr.offset != 0)
@@ -2781,6 +3070,7 @@ void KotlinWriter::WriteKotlinSource() {
   WriteDataInitializers();
   WriteElemInitializers();
   WriteInit();
+  WriteCallIndirectDefinitions();
   WriteSourceBottom();
 }
 

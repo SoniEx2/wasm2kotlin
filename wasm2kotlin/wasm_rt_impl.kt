@@ -31,12 +31,14 @@
 package wasm_rt_impl;
 
 import kotlin.reflect.KMutableProperty0
+import kotlin.reflect.KProperty0
 import kotlin.Function
 
 open class ModuleRegistry {
     private var funcs: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
     private var tables: HashMap<Pair<String, String>, KMutableProperty0<Table>> = HashMap<Pair<String, String>, KMutableProperty0<Table>>();
     private var globals: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
+    private var constants: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
     private var memories: HashMap<Pair<String, String>, KMutableProperty0<Memory>> = HashMap<Pair<String, String>, KMutableProperty0<Memory>>();
 
     open fun <T> exportFunc(modname: String, fieldname: String, value: Function<T>) {
@@ -47,6 +49,9 @@ open class ModuleRegistry {
     }
     open fun <T> exportGlobal(modname: String, fieldname: String, value: KMutableProperty0<T>) {
         globals.put(Pair(modname, fieldname), value)
+    }
+    open fun <T> exportConstant(modname: String, fieldname: String, value: KProperty0<T>) {
+        constants.put(Pair(modname, fieldname), value)
     }
     open fun exportMemory(modname: String, fieldname: String, value: KMutableProperty0<Memory>) {
         memories.put(Pair(modname, fieldname), value)
@@ -61,6 +66,9 @@ open class ModuleRegistry {
     }
     open fun <T> importGlobal(modname: String, fieldname: String): KMutableProperty0<T> {
         return globals.get(Pair(modname, fieldname)) as KMutableProperty0<T>
+    }
+    open fun <T> importConstant(modname: String, fieldname: String): KProperty0<T> {
+        return constants.get(Pair(modname, fieldname)) as KProperty0<T>
     }
     open fun importMemory(modname: String, fieldname: String): KMutableProperty0<Memory> {
         return memories.get(Pair(modname, fieldname)) as KMutableProperty0<Memory>
