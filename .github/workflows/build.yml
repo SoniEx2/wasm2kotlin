@@ -5,7 +5,7 @@ on:
     tags:
   push:
     branches:
-      - master
+      - wasm2kotlin
   pull_request:
 
 jobs:
