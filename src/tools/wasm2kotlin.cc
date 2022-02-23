@@ -118,7 +118,8 @@ static void ParseOptions(int argc, char** argv) {
 #undef WABT_FEATURE
 
   if (any_non_default_feature) {
-    fprintf(stderr, "wasm2kotlin currently support only default feature flags.\n");
+    fprintf(stderr,
+            "wasm2kotlin currently only supports a fixed set of features.\n");
     exit(1);
   }
 }
