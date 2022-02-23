@@ -47,76 +47,23 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WASM2C_DIR = os.path.join(find_exe.REPO_ROOT_DIR, 'wasm2kotlin')
 
 
-def ReinterpretI32(i32_bits):
-    return struct.unpack("<i", struct.pack("<I", i32_bits))[0]
-
-
-def I32ToKotlin(i32_bits):
-    if i32_bits == 0x80000000:
-        return "(-0x7fffffff - 1)"
-    return "%s" % ReinterpretI32(i32_bits)
-
-
-def ReinterpretI64(i64_bits):
-    return struct.unpack("<q", struct.pack("<Q", i64_bits))[0]
-
-
-def I64ToKotlin(i64_bits):
-    if i64_bits == 0x8000000000000000:
-        return "(-0x7fffffffffffffffL - 1L)"
-    return "%sL" % ReinterpretI64(i64_bits)
-
-
-def ReinterpretF32(f32_bits):
-    return struct.unpack('<f', struct.pack('<I', f32_bits))[0]
-
-
-def F32ToKotlin(f32_bits):
-    F32_SIGN_BIT = 0x80000000
-    F32_INF = 0x7f800000
-    F32_SIG_MASK = 0x7fffff
-
-    if (f32_bits & F32_INF) == F32_INF:
-        sign = '-' if (f32_bits & F32_SIGN_BIT) == F32_SIGN_BIT else ''
-        # NaN or infinity
-        if f32_bits & F32_SIG_MASK:
-            # NaN
-            return '%smake_nan_f32(0x%06x)' % (sign, f32_bits & F32_SIG_MASK)
-        else:
-            return '%sFloat.POSITIVE_INFINITY' % sign
-    elif f32_bits == F32_SIGN_BIT:
-        return '-0.0f'
-    else:
-        s = '%.9g' % ReinterpretF32(f32_bits)
-        if ('.' not in s) and ('e' not in s):
-            s += '.0'
-        return s + 'f'
-
-
-def ReinterpretF64(f64_bits):
-    return struct.unpack('<d', struct.pack('<Q', f64_bits))[0]
-
-
-def F64ToKotlin(f64_bits):
-    F64_SIGN_BIT = 0x8000000000000000
-    F64_INF = 0x7ff0000000000000
-    F64_SIG_MASK = 0xfffffffffffff
-
-    if (f64_bits & F64_INF) == F64_INF:
-        sign = '-' if (f64_bits & F64_SIGN_BIT) == F64_SIGN_BIT else ''
-        # NaN or infinity
-        if f64_bits & F64_SIG_MASK:
-            # NaN
-            return '%smake_nan_f64(0x%06x)' % (sign, f64_bits & F64_SIG_MASK)
-        else:
-            return '%sDouble.POSITIVE_INFINITY' % sign
-    elif f64_bits == F64_SIGN_BIT:
-        return '-0.0'
-    else:
-        s = '%.17g' % ReinterpretF64(f64_bits)
-        if ('.' not in s) and ('e' not in s):
-            s += '.0'
-        return s
+def bencode(data):
+    # modified? bencode
+    if isinstance(data, int):
+        return "i{}e".format(data).encode("utf-8")
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    if isinstance(data, bytes):
+        return "{}:".format(len(data)).encode("utf-8") + data
+    if isinstance(data, list):
+        return b"l" + b"".join(bencode(x) for x in data) + b"e"
+    if isinstance(data, dict):
+        def gen(x):
+            for k in sorted(x):
+                yield k
+                yield x[k]
+        return b"d" + b"".join(bencode(x) for x in gen(data)) + b"e"
+    raise TypeError()
 
 
 def MangleType(t):
@@ -127,16 +74,6 @@ def MangleTypes(types):
     if not types:
         return 'v'
     return ''.join(MangleType(t) for t in types)
-
-
-def KotlinType(t):
-    return {'i32': 'Int', 'i64': 'Long', 'f32': 'Float', 'f64': 'Double'}[t]
-
-
-def KotlinTypes(types, default):
-    if not types:
-        return default
-    return ', '.join(KotlinType(t) for t in types)
 
 
 def MangleName(s):
@@ -150,15 +87,20 @@ def MangleName(s):
     return result
 
 
-def LegalizeName(s):
-    pattern = '([^_a-zA-Z0-9])'
-    result = 'w2k_' + re.sub(pattern, '_', s)
-    return result
+replacement = {}
+replacement['"'] = '\\"'
+replacement['$'] = '\\$'
+replacement['\n'] = '\\n'
+replacement['\r'] = '\\r'
+replacement['\\'] = '\\\\'
+for i in range(0x20):
+    if chr(i) not in replacement:
+        replacement[chr(i)] = "\\u{:04x}".format(i)
 
 
 def LegalizeString(s):
-    pattern = '"'
-    result = re.sub(pattern, '\\"', s)
+    pattern = '([\x00-\x19"$\\\\])'
+    result = re.sub(pattern, lambda x: replacement[x.group(1)], s)
     return result
 
 
@@ -178,6 +120,7 @@ class CWriter(object):
         self.module_idx = 0
         self.module_name_to_idx = {}
         self.module_prefix_map = {}
+        self.written_commands = []
 
     def Write(self):
         self.out_file.write("@file:JvmName(\"SpecTestMain\")\n")
@@ -186,12 +129,11 @@ class CWriter(object):
         self._CacheModulePrefixes()
         self.out_file.write(self.prefix)
         self.out_file.write("\nfun run_spec_tests(moduleRegistry: wasm_rt_impl.ModuleRegistry) {\n\n")
-        self.out_file.write("runNoInline {\n")
-        for i, command in enumerate(self.commands, 1):
+        self.out_file.write("runString(moduleRegistry, \"")
+        for command in self.commands:
             self._WriteCommand(command)
-            if i % 32 == 0:
-                self.out_file.write("}\nrunNoInline {\n")
-        self.out_file.write("}")
+        self.out_file.write(LegalizeString(bencode(self.written_commands).decode("utf-8")))
+        self.out_file.write("\")")
         self.out_file.write("\n}\n")
 
     def GetModuleFilenames(self):
@@ -208,7 +150,6 @@ class CWriter(object):
             if IsModuleCommand(command):
                 name = os.path.basename(command['filename'])
                 name = os.path.splitext(name)[0]
-                #name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
                 name = MangleName(name)
 
                 self.module_prefix_map[idx] = name
@@ -238,8 +179,9 @@ class CWriter(object):
             dummy_command = {'type': 'module', 'line': 0, 'filename': filename}
             self.commands.insert(0, dummy_command)
 
-    def _WriteFileAndLine(self, command):
-        self.out_file.write('// %s:%d\n' % (self.source_filename, command['line']))
+    def _WriteFileAndLine(self, command, cmd_out):
+        cmd_out['file'] = self.source_filename
+        cmd_out['line'] = command['line']
 
     def _WriteCommand(self, command):
         command_funcs = {
@@ -253,92 +195,30 @@ class CWriter(object):
 
         func = command_funcs.get(command['type'])
         if func is not None:
-            self._WriteFileAndLine(command)
-            func(command)
-            self.out_file.write('\n')
+            cmd_out = {}
+            cmd_out['type'] = command['type']
+            self._WriteFileAndLine(command, cmd_out)
+            func(command, cmd_out)
+            self.written_commands.append(cmd_out)
 
-    def _WriteModuleCommand(self, command):
-        self.module_idx += 1
-        self.out_file.write("}\n")
-        prefix = self.GetModulePrefix()
-        self.out_file.write('var %s = %s(moduleRegistry, "%s");\n' % (prefix, prefix, prefix))
-        self.out_file.write("runNoInline {\n")
-
-    def _WriteAssertUninstantiableCommand(self, command):
+    def _WriteModuleCommand(self, command, cmd_out):
         self.module_idx += 1
         prefix = self.GetModulePrefix()
-        self.out_file.write('ASSERT_TRAP ({ %s(moduleRegistry, "%s") },' % (prefix, prefix))
-        self.out_file.write(' "%s");\n' % prefix)
+        cmd_out['prefix'] = prefix
 
-    def _WriteActionCommand(self, command):
-        self.out_file.write('%s;\n' % self._Action(command))
+    def _WriteAssertUninstantiableCommand(self, command, cmd_out):
+        self.module_idx += 1
+        prefix = self.GetModulePrefix()
+        cmd_out['prefix'] = prefix
 
-    def _WriteAssertReturnCommand(self, command):
-        expected = command['expected']
-        if len(expected) == 1:
-            type_ = expected[0]['type']
-            value = expected[0]['value']
-            if value == 'nan:canonical':
-                assert_map = {
-                    'f32': 'ASSERT_RETURN_CANONICAL_NAN_F32',
-                    'f64': 'ASSERT_RETURN_CANONICAL_NAN_F64',
-                }
-                assert_macro = assert_map[(type_)]
-                self.out_file.write('%s({ %s }, "%s");\n' % (assert_macro, self._Action(command), LegalizeString(self._Action(command))))
-            elif value == 'nan:arithmetic':
-                assert_map = {
-                    'f32': 'ASSERT_RETURN_ARITHMETIC_NAN_F32',
-                    'f64': 'ASSERT_RETURN_ARITHMETIC_NAN_F64',
-                }
-                assert_macro = assert_map[(type_)]
-                self.out_file.write('%s({ %s }, "%s");\n' % (assert_macro, self._Action(command), LegalizeString(self._Action(command))))
-            else:
-                assert_map = {
-                    'i32': 'ASSERT_RETURN_I32',
-                    'f32': 'ASSERT_RETURN_F32',
-                    'i64': 'ASSERT_RETURN_I64',
-                    'f64': 'ASSERT_RETURN_F64',
-                }
+    def _WriteActionCommand(self, command, cmd_out):
+        self._Action(command, cmd_out)
 
-                assert_macro = assert_map[type_]
-                self.out_file.write('%s({ %s }, %s, "%s");\n' %
-                                    (assert_macro,
-                                     self._Action(command),
-                                     self._ConstantList(expected),
-                                     LegalizeString(self._Action(command))))
-        elif len(expected) == 0:
-            self._WriteAssertActionCommand(command)
-        else:
-            raise Error('Unexpected result with multiple values: %s' % expected)
+    def _WriteAssertReturnCommand(self, command, cmd_out):
+        self._Action(command, cmd_out)
 
-    def _WriteAssertActionCommand(self, command):
-        assert_map = {
-            'assert_exhaustion': 'ASSERT_EXHAUSTION',
-            'assert_return': 'ASSERT_RETURN',
-            'assert_trap': 'ASSERT_TRAP',
-        }
-
-        assert_macro = assert_map[command['type']]
-        self.out_file.write('%s ({ %s }, "%s");\n' % (assert_macro, self._Action(command), LegalizeString(self._Action(command))))
-
-    def _Constant(self, const):
-        type_ = const['type']
-        value = const['value']
-        if type_ in ('f32', 'f64') and value in ('nan:canonical', 'nan:arithmetic'):
-            assert False
-        if type_ == 'i32':
-            return I32ToKotlin(int(value))
-        elif type_ == 'i64':
-            return I64ToKotlin(int(value))
-        elif type_ == 'f32':
-            return F32ToKotlin(int(value))
-        elif type_ == 'f64':
-            return F64ToKotlin(int(value))
-        else:
-            assert False
-
-    def _ConstantList(self, consts):
-        return ', '.join(self._Constant(const) for const in consts)
+    def _WriteAssertActionCommand(self, command, cmd_out):
+        self._Action(command, cmd_out)
 
     def _ActionSig(self, action, expected):
         type_ = action['type']
@@ -351,31 +231,17 @@ class CWriter(object):
         else:
             raise Error('Unexpected action type: %s' % type_)
 
-    def _KotlinSig(self, action, expected):
-        type_ = action['type']
-        result_types = [result['type'] for result in expected]
-        arg_types = [arg['type'] for arg in action.get('args', [])]
-        if type_ == 'invoke':
-            ret = KotlinTypes(result_types, "Unit")
-            return "(" + KotlinTypes(arg_types, "") + ") -> " + ret, ret
-        elif type_ == 'get':
-            return (KotlinType(result_types[0]),)*2
-        else:
-            raise Error('Unexpected action type: %s' % type_)
-
-    def _Action(self, command):
+    def _Action(self, command, cmd_out):
         action = command['action']
         expected = command['expected']
         type_ = action['type']
         mangled_module_name = self.GetModulePrefix(action.get('module'))
         field = (MangleName(action['field']) + MangleName(self._ActionSig(action, expected)))
-        sig, ret = self._KotlinSig(action, expected)
-        if type_ == 'invoke':
-            return 'moduleRegistry.importFunc<%s, %s>("%s", "%s")(%s)' % (sig, ret, mangled_module_name, field, self._ConstantList(action.get('args', [])))
-        elif type_ == 'get':
-            return 'getGlobal<%s>(moduleRegistry, "%s", "%s")' % (sig, mangled_module_name, field)
-        else:
-            raise Error('Unexpected action type: %s' % type_)
+
+        cmd_out['action'] = command['action']
+        cmd_out['expected'] = command['expected']
+        cmd_out['mangled_module_name'] = mangled_module_name
+        cmd_out['field'] = field
 
 
 def Compile(kotlinc, out_dir, main_jar, kotlin_filenames, *args):

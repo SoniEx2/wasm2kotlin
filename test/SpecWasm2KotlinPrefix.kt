@@ -3,6 +3,10 @@
 //package wabt.spec_test
 
 import kotlin.text.StringBuilder
+import java.nio.ByteBuffer
+import java.math.BigInteger
+import java.util.Arrays
+import kotlin.reflect.full.primaryConstructor
 
 var g_tests_run: Int = 0
 var g_tests_passed: Int = 0
@@ -12,53 +16,53 @@ fun error(message: String, exception: Throwable) {
     exception.printStackTrace()
 }
 
-fun <T> ASSERT_TRAP(f: () -> T, name: String) {
+fun <T> ASSERT_TRAP(f: () -> T, name: BMap) {
     g_tests_run++
     try {
         f()
-        error(StringBuilder("expected ").append(name).append(" to trap.").toString(), Exception())
+        error(StringBuilder("expected ").append(name.get("file")).append(":").append(name.get("line")).append(" to trap.").toString(), Exception())
     } catch (e: wasm_rt_impl.WasmException) {
         g_tests_passed++
     }
 }
 
-fun <T> ASSERT_EXHAUSTION(f: () -> T, name: String) {
+fun <T> ASSERT_EXHAUSTION(f: () -> T, name: BMap) {
     g_tests_run++
     try {
         f()
-        error(StringBuilder("expected ").append(name).append(" to trap.").toString(), Exception())
+        error(StringBuilder("expected ").append(name.get("file")).append(":").append(name.get("line")).append(" to trap.").toString(), Exception())
     } catch (e: wasm_rt_impl.ExhaustionException) {
         g_tests_passed++
     } catch (e: wasm_rt_impl.WasmException) {
-        error(StringBuilder("expected ").append(name).append(" to trap due to exhaustion.").toString(), e)
+        error(StringBuilder("expected ").append(name.get("file")).append(":").append(name.get("line")).append(" to trap due to exhaustion.").toString(), e)
     }
 }
 
-fun <T> ASSERT_RETURN(f: () -> T, name: String) {
+fun <T> ASSERT_RETURN(f: () -> T, name: BMap) {
     g_tests_run++
     try {
         f()
         g_tests_passed++
     } catch (e: wasm_rt_impl.WasmException) {
-        error(StringBuilder().append(name).append(" trapped.").toString(), e)
+        error(StringBuilder().append(name.get("file")).append(":").append(name.get("line")).append(" trapped.").toString(), e)
     }
 }
 
-inline fun <T> ASSERT_RETURN_T(f: () -> T, expected: T, is_equal: (T, T) -> Boolean, name: String) {
+inline fun <T> ASSERT_RETURN_T(f: () -> T, expected: T, is_equal: (T, T) -> Boolean, name: BMap) {
     g_tests_run++
     try {
         val value: T = f()
         if (is_equal(value, expected)) {
             g_tests_passed++
         } else {
-            error(StringBuilder("in ").append(name).append(": expected ").append(expected).append(", got ").append(value).append(".").toString(), Exception())
+            error(StringBuilder("in ").append(name.get("file")).append(":").append(name.get("line")).append(": expected ").append(expected).append(", got ").append(value).append(".").toString(), Exception())
         }
     } catch (e: wasm_rt_impl.WasmException) {
-        error(StringBuilder().append(name).append(" trapped.").toString(), e)
+        error(StringBuilder().append(name.get("file")).append(":").append(name.get("line")).append(" trapped.").toString(), e)
     }
 }
 
-inline fun <T> ASSERT_RETURN_NAN_T(f: () -> T, is_nan_kind: (T) -> Boolean, name: String, nan: String) {
+inline fun <T> ASSERT_RETURN_NAN_T(f: () -> T, is_nan_kind: (T) -> Boolean, name: BMap, nan: String) {
     g_tests_run++
     try {
         val value: T = f()
@@ -66,23 +70,23 @@ inline fun <T> ASSERT_RETURN_NAN_T(f: () -> T, is_nan_kind: (T) -> Boolean, name
             g_tests_passed++
         } else {
             // FIXME(Soni): print the bits
-            error(StringBuilder("in ").append(name).append(": expected ").append(nan).append(", got ").append(value).append(".").toString(), Exception())
+            error(StringBuilder("in ").append(name.get("file")).append(":").append(name.get("line")).append(": expected ").append(nan).append(", got ").append(value).append(".").toString(), Exception())
         }
     } catch (e: wasm_rt_impl.WasmException) {
-        error(StringBuilder().append(name).append(" trapped.").toString(), e)
+        error(StringBuilder().append(name.get("file")).append(":").append(name.get("line")).append(" trapped.").toString(), e)
     }
 }
 
 
-fun ASSERT_RETURN_I32(f: () -> Int, expected: Int, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_u32, name)
-fun ASSERT_RETURN_I64(f: () -> Long, expected: Long, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_u64, name)
-fun ASSERT_RETURN_F32(f: () -> Float, expected: Float, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_f32, name)
-fun ASSERT_RETURN_F64(f: () -> Double, expected: Double, name: String) = ASSERT_RETURN_T(f, expected, ::is_equal_f64, name)
+fun ASSERT_RETURN_I32(f: () -> Int, expected: Int, name: BMap) = ASSERT_RETURN_T(f, expected, ::is_equal_u32, name)
+fun ASSERT_RETURN_I64(f: () -> Long, expected: Long, name: BMap) = ASSERT_RETURN_T(f, expected, ::is_equal_u64, name)
+fun ASSERT_RETURN_F32(f: () -> Float, expected: Float, name: BMap) = ASSERT_RETURN_T(f, expected, ::is_equal_f32, name)
+fun ASSERT_RETURN_F64(f: () -> Double, expected: Double, name: BMap) = ASSERT_RETURN_T(f, expected, ::is_equal_f64, name)
 
-fun ASSERT_RETURN_CANONICAL_NAN_F32(f: () -> Float, name: String) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f32, name, "canonical")
-fun ASSERT_RETURN_CANONICAL_NAN_F64(f: () -> Double, name: String) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f64, name, "canonical")
-fun ASSERT_RETURN_ARITHMETIC_NAN_F32(f: () -> Float, name: String) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f32, name, "arithmetic")
-fun ASSERT_RETURN_ARITHMETIC_NAN_F64(f: () -> Double, name: String) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f64, name, "arithmetic")
+fun ASSERT_RETURN_CANONICAL_NAN_F32(f: () -> Float, name: BMap) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f32, name, "canonical")
+fun ASSERT_RETURN_CANONICAL_NAN_F64(f: () -> Double, name: BMap) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f64, name, "canonical")
+fun ASSERT_RETURN_ARITHMETIC_NAN_F32(f: () -> Float, name: BMap) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f32, name, "arithmetic")
+fun ASSERT_RETURN_ARITHMETIC_NAN_F64(f: () -> Double, name: BMap) = ASSERT_RETURN_NAN_T(f, ::is_arithmetic_nan_f64, name, "arithmetic")
 
 fun is_equal_u32(x: Int, y: Int): Boolean = x == y
 fun is_equal_u64(x: Long, y: Long): Boolean = x == y
@@ -172,14 +176,258 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
   
 }
 
-// workaround for run_spec_tests being MethodTooLarge
-fun <R> runNoInline(f: () -> R): R = run { f() }
-
 fun <T> getGlobal(moduleRegistry: wasm_rt_impl.ModuleRegistry, modname: String, fieldname: String): T {
     try {
         return moduleRegistry.importGlobal<T>(modname, fieldname).get()
     } catch (e: NullPointerException) {
         return moduleRegistry.importConstant<T>(modname, fieldname).get()
+    }
+}
+
+object End;
+
+data class Bytes(val bytes: ByteArray) {
+    override fun hashCode(): Int {
+        return Arrays.hashCode(bytes)
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) { return true }
+        if (other === null) { return false }
+        if (other !is Bytes) { return false }
+        return Arrays.equals(bytes, other.bytes)
+    }
+
+    override fun toString(): String {
+        return this.bytes.toString(Charsets.UTF_8)
+    }
+}
+
+data class BList(val list: ArrayList<Any>);
+data class BMap(val map: HashMap<Bytes, Any>) {
+    fun get(s: String): Any? = this.map.get(Bytes(s.toByteArray()))
+}
+
+fun parseInput(s: ByteBuffer, end: Boolean = false): Any? {
+    // modified bencode
+    fun readNum(s: ByteBuffer): BigInteger {
+        val sb = StringBuilder()
+        if (s.hasRemaining()) {
+            s.mark()
+            val first = s.get().toInt()
+            if (first == 0x2D) {
+                sb.append("-")
+            } else {
+                s.reset()
+            }
+        }
+        while (s.hasRemaining()) {
+            s.mark()
+            val key = s.get()
+            if (key.toInt() in 0x30..0x39) {
+                sb.append(key.toInt().toChar())
+            } else {
+                s.reset()
+                break
+            }
+        }
+        return BigInteger(sb.toString())
+    }
+
+    if (!s.hasRemaining()) {
+        return null
+    }
+    s.mark()
+    val result = when (val key = s.get().toInt()) {
+        0x65 -> End // lowercase 'e' -> End
+        0x69 -> { // lowercase 'i' -> number
+            val num = readNum(s)
+            if (!s.hasRemaining() || s.get().toInt() != 0x65) {
+                throw RuntimeException("malformed number")
+            }
+            num
+        }
+        in 0x30..0x39 -> { // '0' to '9' inclusive -> bytes
+            s.reset()
+            val len = readNum(s)
+            if (len.compareTo(BigInteger.valueOf(0x7FFFFFFFL)) > 0) {
+                throw RuntimeException("malformed length")
+            }
+            if (!s.hasRemaining() || s.get().toInt() != 0x3A || s.remaining() < len.toInt()) {
+                throw RuntimeException("malformed bytes")
+            }
+            val bytes = ByteArray(len.toInt())
+            s.get(bytes)
+            Bytes(bytes)
+        }
+        0x6C -> { // lowercase 'l'
+            val list = ArrayList<Any>()
+            while (true) {
+                when (val value = parseInput(s)) {
+                    null -> throw RuntimeException("malformed list")
+                    is End -> break
+                    else -> list.add(value)
+                }
+            }
+            BList(list)
+        }
+        0x64 -> { // lowercase 'd'
+            val map = HashMap<Bytes, Any>()
+            while (true) {
+                map.put(when (val key = parseInput(s)) {
+                    is End -> break
+                    !is Bytes -> throw RuntimeException("malformed dict")
+                    else -> key
+                }, when (val value = parseInput(s)) {
+                    null -> throw RuntimeException("malformed dict")
+                    is End -> throw RuntimeException("malformed dict")
+                    else -> value
+                })
+            }
+            BMap(map)
+        }
+        else -> throw RuntimeException("malformed bencode")
+    }
+    if (end && s.hasRemaining()) {
+        throw RuntimeException()
+    }
+    return result
+}
+
+fun runString(moduleRegistry: wasm_rt_impl.ModuleRegistry, s: String) {
+    val input = parseInput(ByteBuffer.wrap(s.toByteArray()).asReadOnlyBuffer(), true)
+    val runner = Runner(moduleRegistry)
+    if (input is BList) {
+        for (command in input.list) {
+            if (command is BMap) {
+                runner.runCommand(command)
+            }
+        }
+    }
+}
+
+class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
+
+    fun runCommand(command: BMap) {
+        val type = command.get("type")
+        if (type !is Bytes) return
+        when (type.toString()) {
+            "module" -> runModuleCommand(command)
+            "assert_uninstantiable" -> runAssertUninstantiableCommand(command)
+            "action" -> runActionCommand(command)
+            "assert_return" -> runAssertReturnCommand(command)
+            "assert_trap" -> runAssertActionCommand(command)
+            "assert_exhaustion" -> runAssertActionCommand(command)
+            else -> {}
+        }
+    }
+
+    fun runModuleCommand(command: BMap) {
+        val prefix = command.get("prefix")
+        if (prefix !is Bytes) return
+        val sprefix = prefix.toString()
+        val cls = Class.forName("wabt.spec_test." + sprefix).kotlin
+        try {
+            cls.primaryConstructor!!.call(this.moduleRegistry, sprefix)
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            // unwrap exception
+            throw e.getTargetException()
+        }
+    }
+
+    fun runAssertUninstantiableCommand(command: BMap) {
+        ASSERT_TRAP({ runModuleCommand(command) }, command)
+    }
+
+    fun runActionCommand(command: BMap) {
+        action(command)
+    }
+
+    fun runAssertReturnCommand(command: BMap) {
+        val expected = command.get("expected") as BList
+        if (expected.list.size == 1) {
+            val type = ((expected.list.get(0) as BMap).get("type") as Bytes).toString()
+            val value = ((expected.list.get(0) as BMap).get("value") as Bytes).toString()
+            if (value == "nan:canonical") {
+                when (type) {
+                    "f32" -> ASSERT_RETURN_CANONICAL_NAN_F32({ action(command) as Float }, command)
+                    "f64" -> ASSERT_RETURN_CANONICAL_NAN_F64({ action(command) as Double }, command)
+                    else -> throw RuntimeException()
+                }
+            } else if (value == "nan:arithmetic") {
+                when (type) {
+                    "f32" -> ASSERT_RETURN_ARITHMETIC_NAN_F32({ action(command) as Float }, command)
+                    "f64" -> ASSERT_RETURN_ARITHMETIC_NAN_F64({ action(command) as Double }, command)
+                    else -> throw RuntimeException()
+                }
+            } else {
+                val value = BigInteger(value)
+                when (type) {
+                    "i32" -> ASSERT_RETURN_I32({ action(command) as Int }, value.toInt(), command)
+                    "f32" -> ASSERT_RETURN_F32({ action(command) as Float }, Float.fromBits(value.toInt()), command)
+                    "i64" -> ASSERT_RETURN_I64({ action(command) as Long }, value.toLong(), command)
+                    "f64" -> ASSERT_RETURN_F64({ action(command) as Double }, Double.fromBits(value.toLong()), command)
+                    else -> throw RuntimeException()
+                }
+            }
+        } else if (expected.list.size == 0) {
+            runAssertActionCommand(command)
+        } else {
+            throw RuntimeException("Unexpected result with multiple valies " + expected)
+        }
+    }
+
+    fun runAssertActionCommand(command: BMap) {
+        val action = (command.get("type") as Bytes).toString()
+        when (action) {
+            "assert_exhaustion" -> ASSERT_EXHAUSTION({
+                action(command)
+            }, command)
+            "assert_return" -> ASSERT_RETURN({
+                action(command)
+            }, command)
+            "assert_trap" -> ASSERT_TRAP({
+                action(command)
+            }, command)
+        }
+    }
+
+    fun action(command: BMap): Any {
+        val action = command.get("action") as BMap
+        val type = (action.get("type") as Bytes).toString()
+        val module = (command.get("mangled_module_name") as Bytes).toString()
+        val field = (command.get("field") as Bytes).toString()
+        when (type) {
+            "invoke" -> {
+                val func = moduleRegistry.importFunc<Function<Any>, Any>(module, field)
+                val args = when (val action_args = action.get("args")) {
+                    null -> Array<Any?>(0) { null }
+                    is BList -> Array<Any?>(action_args.list.size) {
+                        val arg = action_args.list.get(it) as BMap
+                        val type = (arg.get("type") as Bytes).toString()
+                        val value = BigInteger((arg.get("value") as Bytes).toString())
+                        when (type) {
+                            "f32" -> Float.fromBits(value.toInt())
+                            "f64" -> Double.fromBits(value.toLong())
+                            "i32" -> value.toInt()
+                            "i64" -> value.toLong()
+                            else -> throw RuntimeException()
+                        }
+                    }
+                    else -> throw RuntimeException()
+                }
+                val cls = func::class.java
+                val invoke = cls.getDeclaredMethod("invoke", *Array(args.size) { java.lang.Object::class.java })
+                try {
+                    return invoke.invoke(func, *args) ?: Unit
+                } catch (e: java.lang.reflect.InvocationTargetException) {
+                    // unwrap exception
+                    throw e.getTargetException()
+                }
+            }
+            "get" -> return getGlobal(moduleRegistry, module, field)
+            else -> throw RuntimeException("Unexpected action type " + type)
+        }
     }
 }
 
