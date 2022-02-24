@@ -36,7 +36,6 @@ import io
 import json
 import os
 import re
-import struct
 import sys
 
 import find_exe
@@ -234,7 +233,6 @@ class CWriter(object):
     def _Action(self, command, cmd_out):
         action = command['action']
         expected = command['expected']
-        type_ = action['type']
         mangled_module_name = self.GetModulePrefix(action.get('module'))
         field = (MangleName(action['field']) + MangleName(self._ActionSig(action, expected)))
 
@@ -324,7 +322,6 @@ def main(args):
             out_main_file.write(output.getvalue())
 
         kotlin_filenames = []
-        #includes = '-I%s' % options.wasmrt_dir
 
         # Compile wasm-rt-impl.
         wasm_rt_impl_kotlin = os.path.join(options.wasmrt_dir, 'wasm_rt_impl.kt')
@@ -341,8 +338,6 @@ def main(args):
             wasm2kotlin.RunWithArgs(wasm_filename, '-p', 'wabt.spec_test', '-c', prefix, '-o', kotlin_filename, cwd=out_dir)
             if options.compile:
                 kotlin_filenames.append(kotlin_filename)
-                #defines = '-DWASM_RT_MODULE_PREFIX=%s' % 
-                #o_filenames.append(Compile(kotlinc, c_filename, out_dir, includes, defines))
 
         if options.compile:
             main_kt = os.path.basename(main_filename)
