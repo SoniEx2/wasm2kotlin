@@ -3,7 +3,7 @@
 set -o errexit
 set -o pipefail
 
-if [ -n "$GITHUB_EVENT_BEFORE" ] && [ "push" = "$GITHUB_EVENT_NAME"]; then
+if [ -n "$GITHUB_EVENT_BEFORE" ] && [ "push" = "$GITHUB_EVENT_NAME" ]; then
   BRANCH="$GITHUB_EVENT_BEFORE"
 elif [ -n "$1" ]; then
   BRANCH="$1"
