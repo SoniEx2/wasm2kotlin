@@ -170,8 +170,10 @@ TOOLS = {
 }
 
 # TODO(binji): Add Windows support for compiling using run-spec-wasm2c.py
+# TODO(Soni): Add Windows support for compiling using run-spec-wasm2kotlin.py
 if IS_WINDOWS:
     TOOLS['run-spec-wasm2c'].append(('SKIP', ''))
+    TOOLS['run-spec-wasm2kotlin'].append(('SKIP', ''))
 
 ROUNDTRIP_TOOLS = ('wat2wasm',)
 
