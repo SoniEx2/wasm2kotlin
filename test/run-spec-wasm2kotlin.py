@@ -242,10 +242,8 @@ class CWriter(object):
         cmd_out['field'] = field
 
 
-def Compile(kotlinc, out_dir, main_jar, kotlin_filenames, *args):
-    out_dir = os.path.abspath(out_dir)
-    main_jar = utils.ChangeDir(main_jar, out_dir)
-    kotlinc.RunWithArgs('-d', main_jar, *args, *kotlin_filenames, cwd=out_dir)
+def Compile(kotlinc, main_jar, kotlin_filenames, *args):
+    kotlinc.RunWithArgs('-d', main_jar, *args, *kotlin_filenames)
     return main_jar
 
 
@@ -291,6 +289,7 @@ def main(args):
         wast2json = utils.Executable(
             find_exe.GetWast2JsonExecutable(options.bindir),
             error_cmdline=options.error_cmdline)
+        wast2json.verbose = options.print_cmd
         wast2json.AppendOptionalArgs({'-v': options.verbose})
         wast2json.AppendArg('--disable-reference-types')
         wast2json.AppendArg('--disable-bulk-memory')
@@ -302,8 +301,11 @@ def main(args):
         wasm2kotlin = utils.Executable(
             find_exe.GetWasm2KotlinExecutable(options.bindir),
             error_cmdline=options.error_cmdline)
+        wasm2kotlin.verbose = options.print_cmd
 
         kotlinc = utils.Executable(options.kotlinc, *options.cflags)
+        kotlinc.verbose = options.print_cmd
+
         kotlin = utils.Executable(options.kotlin)
 
         with open(json_file_path) as json_file:
@@ -325,27 +327,28 @@ def main(args):
         kotlin_filenames = []
 
         # Compile wasm-rt-impl.
-        wasm_rt_impl_kotlin = os.path.join(options.wasmrt_dir, 'wasm_rt_impl.kt')
-        wasm_rt_impl_kotlin_out = utils.ChangeDir('wasm_rt_impl.kt', out_dir)
-        with open(wasm_rt_impl_kotlin) as rt_file:
-            with open(wasm_rt_impl_kotlin_out, "w") as out_file:
-                out_file.write(rt_file.read())
+        kotlin_filenames.append(os.path.join(options.wasmrt_dir, 'wasm_rt_impl.kt'))
+        #wasm_rt_impl_kotlin_out = utils.ChangeDir('wasm_rt_impl.kt', out_dir)
+        #with open(wasm_rt_impl_kotlin) as rt_file:
+        #    with open(wasm_rt_impl_kotlin_out, "w") as out_file:
+        #        out_file.write(rt_file.read())
 
-        kotlin_filenames.append("wasm_rt_impl.kt")
+        #kotlin_filenames.append("wasm_rt_impl.kt")
 
         for i, wasm_filename in enumerate(cwriter.GetModuleFilenames()):
+            wasm_filename = os.path.join(out_dir, wasm_filename)
             kotlin_filename = utils.ChangeExt(wasm_filename, '.kt')
             prefix = cwriter.GetModulePrefix(i)
-            wasm2kotlin.RunWithArgs(wasm_filename, '-p', 'wabt.spec_test', '-c', prefix, '-o', kotlin_filename, cwd=out_dir)
+            wasm2kotlin.RunWithArgs(wasm_filename, '-p', 'wabt.spec_test', '-c', prefix, '-o', kotlin_filename)
             if options.compile:
                 kotlin_filenames.append(kotlin_filename)
 
         if options.compile:
-            main_kt = os.path.basename(main_filename)
-            main_jar = Compile(kotlinc, out_dir, utils.ChangeExt(main_kt, ".jar"), kotlin_filenames + [main_kt])
+            main_kt = main_filename
+            main_jar = Compile(kotlinc, utils.ChangeExt(main_kt, ".jar"), kotlin_filenames + [main_kt])
 
         if options.compile and options.run:
-            kotlin.RunWithArgs("-J-ea", "-classpath", main_jar, "wabt.spec_test.SpecTestMain", cwd=out_dir)
+            kotlin.RunWithArgs("-J-ea", "-classpath", main_jar, "wabt.spec_test.SpecTestMain")
 
     return 0
 
