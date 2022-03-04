@@ -328,12 +328,6 @@ def main(args):
 
         # Compile wasm-rt-impl.
         kotlin_filenames.append(os.path.join(options.wasmrt_dir, 'wasm_rt_impl.kt'))
-        #wasm_rt_impl_kotlin_out = utils.ChangeDir('wasm_rt_impl.kt', out_dir)
-        #with open(wasm_rt_impl_kotlin) as rt_file:
-        #    with open(wasm_rt_impl_kotlin_out, "w") as out_file:
-        #        out_file.write(rt_file.read())
-
-        #kotlin_filenames.append("wasm_rt_impl.kt")
 
         for i, wasm_filename in enumerate(cwriter.GetModuleFilenames()):
             wasm_filename = os.path.join(out_dir, wasm_filename)
