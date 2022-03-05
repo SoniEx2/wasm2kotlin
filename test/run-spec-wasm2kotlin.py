@@ -252,8 +252,8 @@ def main(args):
     default_compiler = 'kotlinc'
     default_runner = 'kotlin'
     if IS_WINDOWS:
-        default_compiler = 'kotlinc.exe'
-        default_runner = 'kotlin.exe'
+        default_compiler = 'kotlinc.bat'
+        default_runner = 'kotlin.bat'
     parser = argparse.ArgumentParser()
     parser.add_argument('-o', '--out-dir', metavar='PATH',
                         help='output directory for files.')
