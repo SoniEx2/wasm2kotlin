@@ -244,7 +244,10 @@ class CWriter(object):
 
 
 def Compile(kotlinc, main_jar, kotlin_filenames, *args):
-    kotlinc.RunWithArgs('-d', main_jar, *args, *kotlin_filenames)
+    argfile = utils.ChangeExt(main_jar, '.args')
+    with open(argfile, 'w', encoding='utf-8') as out_arg_file:
+        out_arg_file.write(' '.join(['-d', main_jar, *args, *kotlin_filenames]))
+    kotlinc.RunWithArgs("@{}".format(argfile))
     return main_jar
 
 
