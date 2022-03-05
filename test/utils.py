@@ -19,6 +19,7 @@ import contextlib
 import os
 import json
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -54,12 +55,12 @@ class Executable(object):
 
     def _RunWithArgsInternal(self, *args, **kwargs):
         cmd = [self.exe] + self.before_args + list(args) + self.after_args
-        cmd_str = ' '.join(cmd)
+        cmd_str = shlex.join(cmd)
         if self.verbose:
             print(cmd_str)
 
         if self.error_cmdline:
-            err_cmd_str = cmd_str.replace('.exe', '')
+            err_cmd_str = cmd_str
         else:
             err_cmd_str = self.basename
 

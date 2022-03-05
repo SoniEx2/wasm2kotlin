@@ -44,6 +44,7 @@ from utils import Error
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WASM2C_DIR = os.path.join(find_exe.REPO_ROOT_DIR, 'wasm2kotlin')
+IS_WINDOWS = sys.platform == 'win32'
 
 
 def bencode(data):
@@ -248,6 +249,11 @@ def Compile(kotlinc, main_jar, kotlin_filenames, *args):
 
 
 def main(args):
+    default_compiler = 'kotlinc'
+    default_runner = 'kotlin'
+    if IS_WINDOWS:
+        default_compiler = 'kotlinc.bat'
+        default_runner = 'kotlin.bat'
     parser = argparse.ArgumentParser()
     parser.add_argument('-o', '--out-dir', metavar='PATH',
                         help='output directory for files.')
@@ -259,9 +265,9 @@ def main(args):
     parser.add_argument('--wasmrt-dir', metavar='PATH',
                         help='directory with wasm-rt files', default=WASM2C_DIR)
     parser.add_argument('--kotlinc', metavar='PATH',
-                        help='the path to the Kotlin compiler', default='kotlinc')
+                        help='the path to the Kotlin compiler', default=default_compiler)
     parser.add_argument('--kotlin', metavar='PATH',
-                        help='the path to the Kotlin runner', default='kotlin')
+                        help='the path to the Kotlin runner', default=default_runner)
     parser.add_argument('--cflags', metavar='FLAGS',
                         help='additional flags for Kotlin compiler.',
                         action='append', default=[])
