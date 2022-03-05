@@ -244,7 +244,10 @@ class CWriter(object):
 
 
 def Compile(kotlinc, main_jar, kotlin_filenames, *args):
-    kotlinc.RunWithArgs('-d', main_jar, *args, *kotlin_filenames)
+    argfile = utils.ChangeExt(main_jar, '.args')
+    with open(argfile, 'w', encoding='utf-8') as out_arg_file:
+        out_arg_file.write(' '.join(['-d', main_jar, *args, *kotlin_filenames]))
+    kotlinc.RunWithArgs("@{}".format(argfile))
     return main_jar
 
 
@@ -314,12 +317,12 @@ def main(args):
 
         kotlin = utils.Executable(options.kotlin)
 
-        with open(json_file_path) as json_file:
+        with open(json_file_path, encoding='utf-8') as json_file:
             spec_json = json.load(json_file)
 
         prefix = ''
         if options.prefix:
-            with open(options.prefix) as prefix_file:
+            with open(options.prefix, encoding='utf-8') as prefix_file:
                 prefix = prefix_file.read() + '\n'
 
         output = io.StringIO()
@@ -327,7 +330,7 @@ def main(args):
         cwriter.Write()
 
         main_filename = utils.ChangeExt(json_file_path, '_main.kt')
-        with open(main_filename, 'w') as out_main_file:
+        with open(main_filename, 'w', encoding='utf-8') as out_main_file:
             out_main_file.write(output.getvalue())
 
         kotlin_filenames = []
