@@ -322,7 +322,7 @@ def main(args):
 
         prefix = ''
         if options.prefix:
-            with open(options.prefix) as prefix_file:
+            with open(options.prefix, encoding='utf-8') as prefix_file:
                 prefix = prefix_file.read() + '\n'
 
         output = io.StringIO()
@@ -330,7 +330,7 @@ def main(args):
         cwriter.Write()
 
         main_filename = utils.ChangeExt(json_file_path, '_main.kt')
-        with open(main_filename, 'w') as out_main_file:
+        with open(main_filename, 'w', encoding='utf-8') as out_main_file:
             out_main_file.write(output.getvalue())
 
         kotlin_filenames = []
