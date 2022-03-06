@@ -67,7 +67,8 @@ def bencode(data):
 
 
 def MangleType(t):
-    return {'i32': 'i', 'i64': 'j', 'f32': 'f', 'f64': 'd'}[t]
+    return {'i32': 'i', 'i64': 'j', 'f32': 'f', 'f64': 'd',
+            'externref': 'e', 'funcref': 'c'}[t]
 
 
 def MangleTypes(types):
@@ -300,8 +301,6 @@ def main(args):
             error_cmdline=options.error_cmdline)
         wast2json.verbose = options.print_cmd
         wast2json.AppendOptionalArgs({'-v': options.verbose})
-        wast2json.AppendArg('--disable-reference-types')
-        wast2json.AppendArg('--disable-bulk-memory')
 
         json_file_path = utils.ChangeDir(
             utils.ChangeExt(options.file, '.json'), out_dir)

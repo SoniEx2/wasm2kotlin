@@ -1536,6 +1536,9 @@ void KotlinWriter::WriteElemInitializers() {
   }
   Index elem_segment_index = 0;
   for (const ElemSegment* elem_segment : module_->elem_segments) {
+    if (elem_segment->kind == SegmentKind::Passive) {
+      continue;
+    }
     Write("offset = ");
     WriteInitExpr(elem_segment->offset);
     Write(";", Newline());
