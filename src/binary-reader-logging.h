@@ -176,7 +176,6 @@ class BinaryReaderLogging : public BinaryReaderDelegate {
   Result OnDropExpr() override;
   Result OnElseExpr() override;
   Result OnEndExpr() override;
-  Result OnEndFunc() override;
   Result OnF32ConstExpr(uint32_t value_bits) override;
   Result OnF64ConstExpr(uint64_t value_bits) override;
   Result OnV128ConstExpr(v128 value_bits) override;
@@ -186,18 +185,19 @@ class BinaryReaderLogging : public BinaryReaderDelegate {
   Result OnI64ConstExpr(uint64_t value) override;
   Result OnIfExpr(Type sig_type) override;
   Result OnLoadExpr(Opcode opcode,
+                    Index memidx,
                     Address alignment_log2,
                     Address offset) override;
   Result OnLocalGetExpr(Index local_index) override;
   Result OnLocalSetExpr(Index local_index) override;
   Result OnLocalTeeExpr(Index local_index) override;
   Result OnLoopExpr(Type sig_type) override;
-  Result OnMemoryCopyExpr() override;
+  Result OnMemoryCopyExpr(Index srcmemidx, Index destmemidx) override;
   Result OnDataDropExpr(Index segment_index) override;
-  Result OnMemoryFillExpr() override;
-  Result OnMemoryGrowExpr() override;
-  Result OnMemoryInitExpr(Index segment_index) override;
-  Result OnMemorySizeExpr() override;
+  Result OnMemoryFillExpr(Index memidx) override;
+  Result OnMemoryGrowExpr(Index memidx) override;
+  Result OnMemoryInitExpr(Index segment_index, Index memidx) override;
+  Result OnMemorySizeExpr(Index memidx) override;
   Result OnTableCopyExpr(Index dst_index, Index src_index) override;
   Result OnElemDropExpr(Index segment_index) override;
   Result OnTableInitExpr(Index segment_index, Index table_index) override;
@@ -216,6 +216,7 @@ class BinaryReaderLogging : public BinaryReaderDelegate {
   Result OnReturnExpr() override;
   Result OnSelectExpr(Index result_count, Type* result_types) override;
   Result OnStoreExpr(Opcode opcode,
+                     Index memidx,
                      Address alignment_log2,
                      Address offset) override;
   Result OnThrowExpr(Index tag_index) override;
@@ -324,7 +325,18 @@ class BinaryReaderLogging : public BinaryReaderDelegate {
                       uint32_t table_align) override;
   Result OnDylinkNeededCount(Index count) override;
   Result OnDylinkNeeded(string_view needed) override;
+  Result OnDylinkImportCount(Index count) override;
+  Result OnDylinkExportCount(Index count) override;
+  Result OnDylinkImport(string_view module,
+                        string_view name,
+                        uint32_t flags) override;
+  Result OnDylinkExport(string_view name, uint32_t flags) override;
   Result EndDylinkSection() override;
+
+  Result BeginTargetFeaturesSection(Offset size) override;
+  Result OnFeatureCount(Index count) override;
+  Result OnFeature(uint8_t prefix, string_view name) override;
+  Result EndTargetFeaturesSection() override;
 
   Result BeginLinkingSection(Offset size) override;
   Result OnSymbolCount(Index count) override;

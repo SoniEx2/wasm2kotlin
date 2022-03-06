@@ -51,6 +51,9 @@ class SharedValidator {
   Result GetLabel(Index depth, Label** out_label) {
     return typechecker_.GetLabel(depth, out_label);
   }
+  Result GetCatchCount(Index depth, Index* out_count) {
+    return typechecker_.GetCatchCount(depth, out_count);
+  }
 
   Result WABT_PRINTF_FORMAT(3, 4)
       PrintError(const Location& loc, const char* fmt, ...);
@@ -65,7 +68,8 @@ class SharedValidator {
                     Index param_count,
                     const Type* param_types,
                     Index result_count,
-                    const Type* result_types);
+                    const Type* result_types,
+                    Index type_index);
   Result OnStructType(const Location&, Index field_count, TypeMut* fields);
   Result OnArrayType(const Location&, TypeMut field);
 
@@ -138,18 +142,18 @@ class SharedValidator {
   Result OnGlobalGet(const Location&, Var);
   Result OnGlobalSet(const Location&, Var);
   Result OnIf(const Location&, Type sig_type);
-  Result OnLoad(const Location&, Opcode, Address align);
+  Result OnLoad(const Location&, Opcode, Var memidx, Address align);
   Result OnLoadSplat(const Location&, Opcode, Address align);
   Result OnLoadZero(const Location&, Opcode, Address align);
   Result OnLocalGet(const Location&, Var);
   Result OnLocalSet(const Location&, Var);
   Result OnLocalTee(const Location&, Var);
   Result OnLoop(const Location&, Type sig_type);
-  Result OnMemoryCopy(const Location&);
-  Result OnMemoryFill(const Location&);
-  Result OnMemoryGrow(const Location&);
-  Result OnMemoryInit(const Location&, Var segment_var);
-  Result OnMemorySize(const Location&);
+  Result OnMemoryCopy(const Location&, Var srcmemidx, Var destmemidx);
+  Result OnMemoryFill(const Location&, Var memidx);
+  Result OnMemoryGrow(const Location&, Var memidx);
+  Result OnMemoryInit(const Location&, Var segment_var, Var memidx);
+  Result OnMemorySize(const Location&, Var memidx);
   Result OnNop(const Location&);
   Result OnRefFunc(const Location&, Var func_var);
   Result OnRefIsNull(const Location&);
@@ -163,7 +167,7 @@ class SharedValidator {
   Result OnSimdLoadLane(const Location&, Opcode, Address align, uint64_t lane_idx);
   Result OnSimdStoreLane(const Location&, Opcode, Address align, uint64_t lane_idx);
   Result OnSimdShuffleOp(const Location&, Opcode, v128 lane_idx);
-  Result OnStore(const Location&, Opcode, Address align);
+  Result OnStore(const Location&, Opcode, Var memidx, Address align);
   Result OnTableCopy(const Location&, Var dst_var, Var src_var);
   Result OnTableFill(const Location&, Var table_var);
   Result OnTableGet(const Location&, Var table_var);
@@ -180,11 +184,14 @@ class SharedValidator {
  private:
   struct FuncType {
     FuncType() = default;
-    FuncType(const TypeVector& params, const TypeVector& results)
-        : params(params), results(results) {}
+    FuncType(const TypeVector& params,
+             const TypeVector& results,
+             Index type_index)
+        : params(params), results(results), type_index(type_index) {}
 
     TypeVector params;
     TypeVector results;
+    Index type_index;
   };
 
   struct StructType {
@@ -276,6 +283,8 @@ class SharedValidator {
                              Type sig_type,
                              TypeVector* out_param_types,
                              TypeVector* out_result_types);
+
+  Index GetFunctionTypeIndex(Index func_index) const;
 
   TypeVector ToTypeVector(Index count, const Type* types);
 

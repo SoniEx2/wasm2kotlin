@@ -165,18 +165,19 @@ class BinaryReaderIR : public BinaryReaderNop {
   Result OnI64ConstExpr(uint64_t value) override;
   Result OnIfExpr(Type sig_type) override;
   Result OnLoadExpr(Opcode opcode,
+                    Index memidx,
                     Address alignment_log2,
                     Address offset) override;
   Result OnLocalGetExpr(Index local_index) override;
   Result OnLocalSetExpr(Index local_index) override;
   Result OnLocalTeeExpr(Index local_index) override;
   Result OnLoopExpr(Type sig_type) override;
-  Result OnMemoryCopyExpr() override;
+  Result OnMemoryCopyExpr(Index srcmemidx, Index destmemidx) override;
   Result OnDataDropExpr(Index segment_index) override;
-  Result OnMemoryFillExpr() override;
-  Result OnMemoryGrowExpr() override;
-  Result OnMemoryInitExpr(Index segment_index) override;
-  Result OnMemorySizeExpr() override;
+  Result OnMemoryFillExpr(Index memidx) override;
+  Result OnMemoryGrowExpr(Index memidx) override;
+  Result OnMemoryInitExpr(Index segment_index, Index memidx) override;
+  Result OnMemorySizeExpr(Index memidx) override;
   Result OnTableCopyExpr(Index dst_index, Index src_index) override;
   Result OnElemDropExpr(Index segment_index) override;
   Result OnTableInitExpr(Index segment_index, Index table_index) override;
@@ -185,7 +186,7 @@ class BinaryReaderIR : public BinaryReaderNop {
   Result OnTableGrowExpr(Index table_index) override;
   Result OnTableSizeExpr(Index table_index) override;
   Result OnTableFillExpr(Index table_index) override;
-  Result OnRefFuncExpr(Index func_index) override;
+  Result OnRefFuncExpr(Index type_index) override;
   Result OnRefNullExpr(Type type) override;
   Result OnRefIsNullExpr() override;
   Result OnNopExpr() override;
@@ -193,6 +194,7 @@ class BinaryReaderIR : public BinaryReaderNop {
   Result OnReturnExpr() override;
   Result OnSelectExpr(Index result_count, Type* result_types) override;
   Result OnStoreExpr(Opcode opcode,
+                     Index memidx,
                      Address alignment_log2,
                      Address offset) override;
   Result OnThrowExpr(Index tag_index) override;
@@ -801,29 +803,31 @@ Result BinaryReaderIR::OnElseExpr() {
 }
 
 Result BinaryReaderIR::OnEndExpr() {
-  LabelNode* label;
-  Expr* expr;
-  CHECK_RESULT(TopLabelExpr(&label, &expr));
-  switch (label->label_type) {
-    case LabelType::Block:
-      cast<BlockExpr>(expr)->block.end_loc = GetLocation();
-      break;
-    case LabelType::Loop:
-      cast<LoopExpr>(expr)->block.end_loc = GetLocation();
-      break;
-    case LabelType::If:
-      cast<IfExpr>(expr)->true_.end_loc = GetLocation();
-      break;
-    case LabelType::Else:
-      cast<IfExpr>(expr)->false_end_loc = GetLocation();
-      break;
-    case LabelType::Try:
-      cast<TryExpr>(expr)->block.end_loc = GetLocation();
-      break;
+  if (label_stack_.size() > 1) {
+    LabelNode* label;
+    Expr* expr;
+    CHECK_RESULT(TopLabelExpr(&label, &expr));
+    switch (label->label_type) {
+      case LabelType::Block:
+        cast<BlockExpr>(expr)->block.end_loc = GetLocation();
+        break;
+      case LabelType::Loop:
+        cast<LoopExpr>(expr)->block.end_loc = GetLocation();
+        break;
+      case LabelType::If:
+        cast<IfExpr>(expr)->true_.end_loc = GetLocation();
+        break;
+      case LabelType::Else:
+        cast<IfExpr>(expr)->false_end_loc = GetLocation();
+        break;
+      case LabelType::Try:
+        cast<TryExpr>(expr)->block.end_loc = GetLocation();
+        break;
 
-    case LabelType::Func:
-    case LabelType::Catch:
-      break;
+      case LabelType::Func:
+      case LabelType::Catch:
+        break;
+    }
   }
 
   return PopLabel();
@@ -871,9 +875,11 @@ Result BinaryReaderIR::OnIfExpr(Type sig_type) {
 }
 
 Result BinaryReaderIR::OnLoadExpr(Opcode opcode,
+                                  Index memidx,
                                   Address alignment_log2,
                                   Address offset) {
-  return AppendExpr(MakeUnique<LoadExpr>(opcode, 1 << alignment_log2, offset));
+  return AppendExpr(
+      MakeUnique<LoadExpr>(opcode, Var(memidx), 1 << alignment_log2, offset));
 }
 
 Result BinaryReaderIR::OnLoopExpr(Type sig_type) {
@@ -885,28 +891,29 @@ Result BinaryReaderIR::OnLoopExpr(Type sig_type) {
   return Result::Ok;
 }
 
-Result BinaryReaderIR::OnMemoryCopyExpr() {
-  return AppendExpr(MakeUnique<MemoryCopyExpr>());
+Result BinaryReaderIR::OnMemoryCopyExpr(Index srcmemidx, Index destmemidx) {
+  return AppendExpr(
+      MakeUnique<MemoryCopyExpr>(Var(srcmemidx), Var(destmemidx)));
 }
 
 Result BinaryReaderIR::OnDataDropExpr(Index segment) {
   return AppendExpr(MakeUnique<DataDropExpr>(Var(segment)));
 }
 
-Result BinaryReaderIR::OnMemoryFillExpr() {
-  return AppendExpr(MakeUnique<MemoryFillExpr>());
+Result BinaryReaderIR::OnMemoryFillExpr(Index memidx) {
+  return AppendExpr(MakeUnique<MemoryFillExpr>(Var(memidx)));
 }
 
-Result BinaryReaderIR::OnMemoryGrowExpr() {
-  return AppendExpr(MakeUnique<MemoryGrowExpr>());
+Result BinaryReaderIR::OnMemoryGrowExpr(Index memidx) {
+  return AppendExpr(MakeUnique<MemoryGrowExpr>(Var(memidx)));
 }
 
-Result BinaryReaderIR::OnMemoryInitExpr(Index segment) {
-  return AppendExpr(MakeUnique<MemoryInitExpr>(Var(segment)));
+Result BinaryReaderIR::OnMemoryInitExpr(Index segment, Index memidx) {
+  return AppendExpr(MakeUnique<MemoryInitExpr>(Var(segment), Var(memidx)));
 }
 
-Result BinaryReaderIR::OnMemorySizeExpr() {
-  return AppendExpr(MakeUnique<MemorySizeExpr>());
+Result BinaryReaderIR::OnMemorySizeExpr(Index memidx) {
+  return AppendExpr(MakeUnique<MemorySizeExpr>(Var(memidx)));
 }
 
 Result BinaryReaderIR::OnTableCopyExpr(Index dst_index, Index src_index) {
@@ -941,8 +948,8 @@ Result BinaryReaderIR::OnTableFillExpr(Index table_index) {
   return AppendExpr(MakeUnique<TableFillExpr>(Var(table_index)));
 }
 
-Result BinaryReaderIR::OnRefFuncExpr(Index func_index) {
-  return AppendExpr(MakeUnique<RefFuncExpr>(Var(func_index)));
+Result BinaryReaderIR::OnRefFuncExpr(Index type_index) {
+  return AppendExpr(MakeUnique<RefFuncExpr>(Var(type_index)));
 }
 
 Result BinaryReaderIR::OnRefNullExpr(Type type) {
@@ -981,9 +988,11 @@ Result BinaryReaderIR::OnLocalSetExpr(Index local_index) {
 }
 
 Result BinaryReaderIR::OnStoreExpr(Opcode opcode,
+                                   Index memidx,
                                    Address alignment_log2,
                                    Address offset) {
-  return AppendExpr(MakeUnique<StoreExpr>(opcode, 1 << alignment_log2, offset));
+  return AppendExpr(
+      MakeUnique<StoreExpr>(opcode, Var(memidx), 1 << alignment_log2, offset));
 }
 
 Result BinaryReaderIR::OnThrowExpr(Index tag_index) {
@@ -1078,7 +1087,6 @@ Result BinaryReaderIR::OnUnreachableExpr() {
 }
 
 Result BinaryReaderIR::EndFunctionBody(Index index) {
-  CHECK_RESULT(PopLabel());
   current_func_ = nullptr;
   return Result::Ok;
 }

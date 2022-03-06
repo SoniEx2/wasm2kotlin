@@ -110,6 +110,7 @@ class BinaryReader {
   Result ReadIndex(Index* index, const char* desc) WABT_WARN_UNUSED;
   Result ReadOffset(Offset* offset, const char* desc) WABT_WARN_UNUSED;
   Result ReadAlignment(Address* align_log2, const char* desc) WABT_WARN_UNUSED;
+  Result ReadMemidx(Index* memidx, const char* desc) WABT_WARN_UNUSED;
   Result ReadCount(Index* index, const char* desc) WABT_WARN_UNUSED;
   Result ReadField(TypeMut* out_value) WABT_WARN_UNUSED;
 
@@ -132,6 +133,7 @@ class BinaryReader {
   Result ReadRelocSection(Offset section_size) WABT_WARN_UNUSED;
   Result ReadDylinkSection(Offset section_size) WABT_WARN_UNUSED;
   Result ReadDylink0Section(Offset section_size) WABT_WARN_UNUSED;
+  Result ReadTargetFeaturesSections(Offset section_size) WABT_WARN_UNUSED;
   Result ReadLinkingSection(Offset section_size) WABT_WARN_UNUSED;
   Result ReadCustomSection(Index section_index,
                            Offset section_size) WABT_WARN_UNUSED;
@@ -321,7 +323,13 @@ Result BinaryReader::ReadS64Leb128(uint64_t* out_value, const char* desc) {
 Result BinaryReader::ReadType(Type* out_value, const char* desc) {
   uint32_t type = 0;
   CHECK_RESULT(ReadS32Leb128(&type, desc));
-  *out_value = static_cast<Type>(type);
+  if (static_cast<Type::Enum>(type) == Type::Reference) {
+    uint32_t heap_type = 0;
+    CHECK_RESULT(ReadS32Leb128(&heap_type, desc));
+    *out_value = Type(Type::Reference, heap_type);
+  } else {
+    *out_value = static_cast<Type>(type);
+  }
   return Result::Ok;
 }
 
@@ -391,11 +399,19 @@ Result BinaryReader::ReadOffset(Offset* offset, const char* desc) {
 Result BinaryReader::ReadAlignment(Address* alignment_log2, const char* desc) {
   uint32_t value;
   CHECK_RESULT(ReadU32Leb128(&value, desc));
-  if (value >= 32) {
+  if (value >= 128 ||
+      (value >= 32 && !options_.features.multi_memory_enabled())) {
     PrintError("invalid %s: %u", desc, value);
     return Result::Error;
   }
   *alignment_log2 = value;
+  return Result::Ok;
+}
+
+Result BinaryReader::ReadMemidx(Index* memidx, const char* desc) {
+  CHECK_RESULT(ReadIndex(memidx, desc));
+  ERROR_UNLESS(*memidx < memories.size(), "memory index %u out of range",
+               *memidx);
   return Result::Ok;
 }
 
@@ -446,6 +462,9 @@ bool BinaryReader::IsConcreteType(Type type) {
     case Type::FuncRef:
     case Type::ExternRef:
       return options_.features.reference_types_enabled();
+
+    case Type::Reference:
+      return options_.features.function_references_enabled();
 
     default:
       return false;
@@ -781,11 +800,9 @@ Result BinaryReader::ReadFunctionBody(Offset end_offset) {
         break;
 
       case Opcode::End:
+        CALLBACK0(OnEndExpr);
         if (state_.offset == end_offset) {
           seen_end_opcode = true;
-          CALLBACK0(OnEndFunc);
-        } else {
-          CALLBACK0(OnEndExpr);
         }
         break;
 
@@ -945,8 +962,20 @@ Result BinaryReader::ReadFunctionBody(Offset end_offset) {
         CHECK_RESULT(ReadAlignment(&alignment_log2, "load alignment"));
         Address offset;
         CHECK_RESULT(ReadAddress(&offset, 0, "load offset"));
-        CALLBACK(OnLoadExpr, opcode, alignment_log2, offset);
-        CALLBACK(OnOpcodeUint32Uint32, alignment_log2, offset);
+        Index memidx = 0;
+        if (alignment_log2 >> 6) {
+          ERROR_IF(!options_.features.multi_memory_enabled(),
+                   "multi_memory not allowed");
+          CHECK_RESULT(ReadMemidx(&memidx, "store memidx"));
+          alignment_log2 = alignment_log2 & ((1 << 6) - 1);
+        }
+
+        CALLBACK(OnLoadExpr, opcode, memidx, alignment_log2, offset);
+        if (memidx) {
+          CALLBACK(OnOpcodeUint32Uint32Uint32, alignment_log2, offset, memidx);
+        } else {
+          CALLBACK(OnOpcodeUint32Uint32, alignment_log2, offset);
+        }
         break;
       }
 
@@ -964,27 +993,48 @@ Result BinaryReader::ReadFunctionBody(Offset end_offset) {
         CHECK_RESULT(ReadAlignment(&alignment_log2, "store alignment"));
         Address offset;
         CHECK_RESULT(ReadAddress(&offset, 0, "store offset"));
+        Index memidx = 0;
+        if (alignment_log2 >> 6) {
+          ERROR_IF(!options_.features.multi_memory_enabled(),
+                   "multi_memory not allowed");
+          CHECK_RESULT(ReadMemidx(&memidx, "store memidx"));
+          alignment_log2 = alignment_log2 & ((1 << 6) - 1);
+        }
 
-        CALLBACK(OnStoreExpr, opcode, alignment_log2, offset);
-        CALLBACK(OnOpcodeUint32Uint32, alignment_log2, offset);
+        CALLBACK(OnStoreExpr, opcode, memidx, alignment_log2, offset);
+        if (memidx) {
+          CALLBACK(OnOpcodeUint32Uint32Uint32, alignment_log2, offset, memidx);
+        } else {
+          CALLBACK(OnOpcodeUint32Uint32, alignment_log2, offset);
+        }
         break;
       }
 
       case Opcode::MemorySize: {
-        uint8_t reserved;
-        CHECK_RESULT(ReadU8(&reserved, "memory.size reserved"));
-        ERROR_UNLESS(reserved == 0, "memory.size reserved value must be 0");
-        CALLBACK0(OnMemorySizeExpr);
-        CALLBACK(OnOpcodeUint32, reserved);
+        Index memidx = 0;
+        if (!options_.features.multi_memory_enabled()) {
+          uint8_t reserved;
+          CHECK_RESULT(ReadU8(&reserved, "memory.size reserved"));
+          ERROR_UNLESS(reserved == 0, "memory.size reserved value must be 0");
+        } else {
+          CHECK_RESULT(ReadMemidx(&memidx, "memory.size memidx"));
+        }
+        CALLBACK(OnMemorySizeExpr, memidx);
+        CALLBACK(OnOpcodeUint32, memidx);
         break;
       }
 
       case Opcode::MemoryGrow: {
-        uint8_t reserved;
-        CHECK_RESULT(ReadU8(&reserved, "memory.grow reserved"));
-        ERROR_UNLESS(reserved == 0, "memory.grow reserved value must be 0");
-        CALLBACK0(OnMemoryGrowExpr);
-        CALLBACK(OnOpcodeUint32, reserved);
+        Index memidx = 0;
+        if (!options_.features.multi_memory_enabled()) {
+          uint8_t reserved;
+          CHECK_RESULT(ReadU8(&reserved, "memory.grow reserved"));
+          ERROR_UNLESS(reserved == 0, "memory.grow reserved value must be 0");
+        } else {
+          CHECK_RESULT(ReadMemidx(&memidx, "memory.grow memidx"));
+        }
+        CALLBACK(OnMemoryGrowExpr, memidx);
+        CALLBACK(OnOpcodeUint32, memidx);
         break;
       }
 
@@ -1632,11 +1682,16 @@ Result BinaryReader::ReadFunctionBody(Offset end_offset) {
         ERROR_IF(data_count_ == kInvalidIndex,
                  "memory.init requires data count section");
         CHECK_RESULT(ReadIndex(&segment, "elem segment index"));
-        uint8_t reserved;
-        CHECK_RESULT(ReadU8(&reserved, "reserved memory index"));
-        ERROR_UNLESS(reserved == 0, "reserved value must be 0");
-        CALLBACK(OnMemoryInitExpr, segment);
-        CALLBACK(OnOpcodeUint32Uint32, segment, reserved);
+        Index memidx = 0;
+        if (!options_.features.multi_memory_enabled()) {
+          uint8_t reserved;
+          CHECK_RESULT(ReadU8(&reserved, "reserved memory index"));
+          ERROR_UNLESS(reserved == 0, "reserved value must be 0");
+        } else {
+          CHECK_RESULT(ReadMemidx(&memidx, "memory.init memidx"));
+        }
+        CALLBACK(OnMemoryInitExpr, segment, memidx);
+        CALLBACK(OnOpcodeUint32Uint32, segment, memidx);
         break;
       }
 
@@ -1657,21 +1712,34 @@ Result BinaryReader::ReadFunctionBody(Offset end_offset) {
       }
 
       case Opcode::MemoryFill: {
-        uint8_t reserved;
-        CHECK_RESULT(ReadU8(&reserved, "reserved memory index"));
-        ERROR_UNLESS(reserved == 0, "reserved value must be 0");
-        CALLBACK(OnMemoryFillExpr);
-        CALLBACK(OnOpcodeUint32, reserved);
+        Index memidx = 0;
+        if (!options_.features.multi_memory_enabled()) {
+          uint8_t reserved;
+          CHECK_RESULT(ReadU8(&reserved, "memory.fill reserved"));
+          ERROR_UNLESS(reserved == 0, "memory.fill reserved value must be 0");
+        } else {
+          CHECK_RESULT(ReadMemidx(&memidx, "memory.fill memidx"));
+        }
+        CALLBACK(OnMemoryFillExpr, memidx);
+        CALLBACK(OnOpcodeUint32, memidx);
         break;
       }
+
       case Opcode::MemoryCopy: {
-        uint8_t reserved;
-        CHECK_RESULT(ReadU8(&reserved, "reserved memory index"));
-        ERROR_UNLESS(reserved == 0, "reserved value must be 0");
-        CHECK_RESULT(ReadU8(&reserved, "reserved memory index"));
-        ERROR_UNLESS(reserved == 0, "reserved value must be 0");
-        CALLBACK(OnMemoryCopyExpr);
-        CALLBACK(OnOpcodeUint32Uint32, reserved, reserved);
+        Index srcmemidx = 0;
+        Index destmemidx = 0;
+        if (!options_.features.multi_memory_enabled()) {
+          uint8_t reserved;
+          CHECK_RESULT(ReadU8(&reserved, "reserved memory index"));
+          ERROR_UNLESS(reserved == 0, "reserved value must be 0");
+          CHECK_RESULT(ReadU8(&reserved, "reserved memory index"));
+          ERROR_UNLESS(reserved == 0, "reserved value must be 0");
+        } else {
+          CHECK_RESULT(ReadMemidx(&srcmemidx, "memory.copy srcmemidx"));
+          CHECK_RESULT(ReadMemidx(&destmemidx, "memory.copy destmemindex"));
+        }
+        CALLBACK(OnMemoryCopyExpr, srcmemidx, destmemidx);
+        CALLBACK(OnOpcodeUint32Uint32, srcmemidx, destmemidx);
         break;
       }
 
@@ -1969,6 +2037,7 @@ Result BinaryReader::ReadDylink0Section(Offset section_size) {
     ReadEndRestoreGuard guard(this);
     read_end_ = subsection_end;
 
+    uint32_t count;
     switch (static_cast<DylinkEntryType>(dylink_type)) {
       case DylinkEntryType::MemInfo: {
         uint32_t mem_size;
@@ -1983,8 +2052,7 @@ Result BinaryReader::ReadDylink0Section(Offset section_size) {
         CALLBACK(OnDylinkInfo, mem_size, mem_align, table_size, table_align);
         break;
       }
-      case DylinkEntryType::Needed: {
-        uint32_t count;
+      case DylinkEntryType::Needed:
         CHECK_RESULT(ReadU32Leb128(&count, "needed_dynlibs"));
         CALLBACK(OnDylinkNeededCount, count);
         while (count--) {
@@ -1993,7 +2061,30 @@ Result BinaryReader::ReadDylink0Section(Offset section_size) {
           CALLBACK(OnDylinkNeeded, so_name);
         }
         break;
-      }
+      case DylinkEntryType::ImportInfo:
+        CHECK_RESULT(ReadU32Leb128(&count, "count"));
+        CALLBACK(OnDylinkImportCount, count);
+        for (Index i = 0; i < count; ++i) {
+          uint32_t flags = 0;
+          string_view module;
+          string_view field;
+          CHECK_RESULT(ReadStr(&module, "module"));
+          CHECK_RESULT(ReadStr(&field, "field"));
+          CHECK_RESULT(ReadU32Leb128(&flags, "flags"));
+          CALLBACK(OnDylinkImport, module, field, flags);
+        }
+        break;
+      case DylinkEntryType::ExportInfo:
+        CHECK_RESULT(ReadU32Leb128(&count, "count"));
+        CALLBACK(OnDylinkExportCount, count);
+        for (Index i = 0; i < count; ++i) {
+          uint32_t flags = 0;
+          string_view name;
+          CHECK_RESULT(ReadStr(&name, "name"));
+          CHECK_RESULT(ReadU32Leb128(&flags, "flags"));
+          CALLBACK(OnDylinkExport, name, flags);
+        }
+        break;
       default:
         // Unknown subsection, skip it.
         state_.offset = subsection_end;
@@ -2031,6 +2122,22 @@ Result BinaryReader::ReadDylinkSection(Offset section_size) {
   }
 
   CALLBACK0(EndDylinkSection);
+  return Result::Ok;
+}
+
+Result BinaryReader::ReadTargetFeaturesSections(Offset section_size) {
+  CALLBACK(BeginTargetFeaturesSection, section_size);
+  uint32_t count;
+  CHECK_RESULT(ReadU32Leb128(&count, "sym count"));
+  CALLBACK(OnFeatureCount, count);
+  while (count--) {
+    uint8_t prefix;
+    string_view name;
+    CHECK_RESULT(ReadU8(&prefix, "prefix"));
+    CHECK_RESULT(ReadStr(&name, "feature name"));
+    CALLBACK(OnFeature, prefix, name);
+  }
+  CALLBACK0(EndTargetFeaturesSection);
   return Result::Ok;
 }
 
@@ -2213,6 +2320,8 @@ Result BinaryReader::ReadCustomSection(Index section_index,
   } else if (section_name.rfind(WABT_BINARY_SECTION_RELOC, 0) == 0) {
     // Reloc sections always begin with "reloc."
     CHECK_RESULT(ReadRelocSection(section_size));
+  } else if (section_name == WABT_BINARY_SECTION_TARGET_FEATURES) {
+    CHECK_RESULT(ReadTargetFeaturesSections(section_size));
   } else if (section_name == WABT_BINARY_SECTION_LINKING) {
     CHECK_RESULT(ReadLinkingSection(section_size));
   } else {
@@ -2236,8 +2345,7 @@ Result BinaryReader::ReadTypeSection(Offset section_size) {
     } else {
       uint8_t type;
       CHECK_RESULT(ReadU8(&type, "type form"));
-      ERROR_UNLESS(type == 0x60, "unexpected type form (got " PRItypecode ")",
-                   WABT_PRINTF_TYPE_CODE(type));
+      ERROR_UNLESS(type == 0x60, "unexpected type form (got %#x)", type);
       form = Type::Func;
     }
 

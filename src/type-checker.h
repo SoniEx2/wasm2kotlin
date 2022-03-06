@@ -58,6 +58,7 @@ class TypeChecker {
   bool IsUnreachable();
   Result GetLabel(Index depth, Label** out_label);
   Result GetRethrowLabel(Index depth, Label** out_label);
+  Result GetCatchCount(Index depth, Index* out_depth);
 
   Result BeginFunction(const TypeVector& sig);
   Result OnAtomicFence(uint32_t consistency_model);
@@ -77,7 +78,7 @@ class TypeChecker {
   Result OnCall(const TypeVector& param_types, const TypeVector& result_types);
   Result OnCallIndirect(const TypeVector& param_types,
                         const TypeVector& result_types);
-  Result OnFuncRef(Index* out_index);
+  Result OnIndexedFuncRef(Index* out_index);
   Result OnReturnCall(const TypeVector& param_types, const TypeVector& result_types);
   Result OnReturnCallIndirect(const TypeVector& param_types, const TypeVector& result_types);
   Result OnCatch(const TypeVector& sig);
@@ -110,7 +111,7 @@ class TypeChecker {
   Result OnTableGrow(Type elem_type);
   Result OnTableSize();
   Result OnTableFill(Type elem_type);
-  Result OnRefFuncExpr(Index func_index);
+  Result OnRefFuncExpr(Index type_index);
   Result OnRefNullExpr(Type type);
   Result OnRefIsNullExpr();
   Result OnRethrow(Index depth);

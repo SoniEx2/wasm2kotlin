@@ -1425,7 +1425,6 @@ void KotlinWriter::WriteMemories() {
 
   Write(Newline());
 
-  assert(module_->memories.size() <= 1);
   Index memory_index = 0;
   for (const Memory* memory : module_->memories) {
     bool is_import = memory_index < module_->num_memory_imports;
@@ -1501,13 +1500,17 @@ void KotlinWriter::WriteDataInitializers() {
   }
 
   Write(Newline(), "init /* memory */ ", OpenBrace());
-  if (memory && module_->num_memory_imports == 0) {
-    uint32_t max =
-        memory->page_limits.has_max ? memory->page_limits.max : 65536;
-    Write("wasm_rt_impl.allocate_memory(", ExternalPtr(memory->name), ", ",
-          memory->page_limits.initial, ", ");
-    Writef("%d", static_cast<int32_t>(max));
-    Write(");", Newline());
+  if (module_->memories.size() > module_->num_memory_imports) {
+    Index memory_idx = module_->num_memory_imports;
+    for (Index i = memory_idx; i < module_->memories.size(); i++) {
+      memory = module_->memories[i];
+      uint32_t max =
+          memory->page_limits.has_max ? memory->page_limits.max : 65536;
+      Write("wasm_rt_impl.allocate_memory(", ExternalPtr(memory->name), ", ",
+            memory->page_limits.initial, ", ");
+      Writef("%d", static_cast<int32_t>(max));
+      Write(");", Newline());
+    }
   }
   data_segment_index = 0;
   for (const DataSegment* data_segment : module_->data_segments) {
@@ -2259,8 +2262,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
         break;
 
       case ExprType::MemoryGrow: {
-        assert(module_->memories.size() == 1);
-        Memory* memory = module_->memories[0];
+        Memory* memory = module_->memories[module_->GetMemoryIndex(
+            cast<MemoryGrowExpr>(&expr)->memidx)];
 
         assert(StackType(0) == Type::I32);
         StackValue sv = PopValue();
@@ -2277,8 +2280,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
       }
 
       case ExprType::MemorySize: {
-        assert(module_->memories.size() == 1);
-        Memory* memory = module_->memories[0];
+        Memory* memory = module_->memories[module_->GetMemoryIndex(
+            cast<MemorySizeExpr>(&expr)->memidx)];
 
         PushType(Type::I32);
         StackValue sv;
@@ -2827,8 +2830,7 @@ void KotlinWriter::Write(const LoadExpr& expr) {
       WABT_UNREACHABLE;
   }
 
-  assert(module_->memories.size() == 1);
-  Memory* memory = module_->memories[0];
+  Memory* memory = module_->memories[module_->GetMemoryIndex(expr.memidx)];
 
   Type result_type = expr.opcode.GetResultType();
   StackValue sv = PopValue();
@@ -2868,8 +2870,7 @@ void KotlinWriter::Write(const StoreExpr& expr) {
       WABT_UNREACHABLE;
   }
 
-  assert(module_->memories.size() == 1);
-  Memory* memory = module_->memories[0];
+  Memory* memory = module_->memories[module_->GetMemoryIndex(expr.memidx)];
 
   StackValue sv_right = PopValue();
   StackValue sv_left = PopValue();

@@ -100,6 +100,24 @@ Result TypeChecker::GetRethrowLabel(Index depth, Label** out_label) {
   return Result::Error;
 }
 
+Result TypeChecker::GetCatchCount(Index depth, Index* out_count) {
+  Label* unused;
+  if (Failed(GetLabel(depth, &unused))) {
+    return Result::Error;
+  }
+
+  Index catch_count = 0;
+  for (Index idx = 0; idx <= depth; idx++) {
+    LabelType type = label_stack_[label_stack_.size() - idx - 1].label_type;
+    if (type == LabelType::Catch) {
+      catch_count++;
+    }
+  }
+  *out_count = catch_count;
+
+  return Result::Ok;
+}
+
 Result TypeChecker::TopLabel(Label** out_label) {
   return GetLabel(0, out_label);
 }
@@ -205,6 +223,12 @@ Result TypeChecker::CheckTypeStackEnd(const char* desc) {
 Result TypeChecker::CheckType(Type actual, Type expected) {
   if (expected == Type::Any || actual == Type::Any) {
     return Result::Ok;
+  }
+
+  if (expected == Type::Reference && actual == Type::Reference) {
+    return expected.GetReferenceIndex() == actual.GetReferenceIndex()
+               ? Result::Ok
+               : Result::Error;
   }
   if (actual != expected) {
     return Result::Error;
@@ -489,10 +513,10 @@ Result TypeChecker::OnCallIndirect(const TypeVector& param_types,
   return result;
 }
 
-Result TypeChecker::OnFuncRef(Index* out_index) {
+Result TypeChecker::OnIndexedFuncRef(Index* out_index) {
   Type type;
   Result result = PeekType(0, &type);
-  if (!(type == Type::Any || type.IsIndex())) {
+  if (!(type == Type::Any || type.IsReferenceWithIndex())) {
     TypeVector actual;
     if (Succeeded(result)) {
       actual.push_back(type);
@@ -504,7 +528,7 @@ Result TypeChecker::OnFuncRef(Index* out_index) {
     result = Result::Error;
   }
   if (Succeeded(result)) {
-    *out_index = type.GetIndex();
+    *out_index = type.GetReferenceIndex();
   }
   result |= DropTypes(1);
   return result;
@@ -569,10 +593,6 @@ Result TypeChecker::OnDelegate(Index depth) {
   // Delegate starts counting after the current try, as the delegate
   // instruction is not actually in the try block.
   CHECK_RESULT(GetLabel(depth + 1, &label));
-  if (Failed(Check2LabelTypes(label, LabelType::Try, LabelType::Func))) {
-    PrintError("try-delegate must target a try block or function label");
-    result = Result::Error;
-  }
 
   Label* try_label;
   CHECK_RESULT(TopLabel(&try_label));
@@ -749,9 +769,9 @@ Result TypeChecker::OnTableFill(Type elem_type) {
   return PopAndCheck3Types(Type::I32, elem_type, Type::I32, "table.fill");
 }
 
-Result TypeChecker::OnRefFuncExpr(Index func_index) {
+Result TypeChecker::OnRefFuncExpr(Index type_index) {
   if (features_.function_references_enabled()) {
-    PushType(Type(func_index));
+    PushType(Type(Type::Reference, type_index));
   } else {
     PushType(Type::FuncRef);
   }

@@ -550,6 +550,22 @@ Result BinaryReaderLogging::OnDylinkNeeded(string_view so_name) {
   return reader_->OnDylinkNeeded(so_name);
 }
 
+Result BinaryReaderLogging::OnDylinkExport(string_view name, uint32_t flags) {
+  LOGF("OnDylinkExport(name: " PRIstringview ", flags: 0x%x)\n",
+       WABT_PRINTF_STRING_VIEW_ARG(name), flags);
+  return reader_->OnDylinkExport(name, flags);
+}
+
+Result BinaryReaderLogging::OnDylinkImport(string_view module,
+                                           string_view name,
+                                           uint32_t flags) {
+  LOGF("OnDylinkImport(module: " PRIstringview ", name: " PRIstringview
+       ", flags: 0x%x)\n",
+       WABT_PRINTF_STRING_VIEW_ARG(module), WABT_PRINTF_STRING_VIEW_ARG(name),
+       flags);
+  return reader_->OnDylinkImport(module, name, flags);
+}
+
 Result BinaryReaderLogging::OnRelocCount(Index count,
                                          Index section_index) {
   LOGF("OnRelocCount(count: %" PRIindex ", section: %" PRIindex ")\n", count,
@@ -566,6 +582,12 @@ Result BinaryReaderLogging::OnReloc(RelocType type,
        ", addend: %d)\n",
        GetRelocTypeName(type), offset, index, signed_addend);
   return reader_->OnReloc(type, offset, index, addend);
+}
+
+Result BinaryReaderLogging::OnFeature(uint8_t prefix, string_view name) {
+  LOGF("OnFeature(prefix: '%c', name: '" PRIstringview "')\n", prefix,
+       WABT_PRINTF_STRING_VIEW_ARG(name));
+  return reader_->OnFeature(prefix, name);
 }
 
 Result BinaryReaderLogging::OnDataSymbol(Index index,
@@ -726,6 +748,15 @@ Result BinaryReaderLogging::OnComdatEntry(ComdatType kind, Index index) {
     return reader_->name(opcode, alignment_log2, offset);                 \
   }
 
+#define DEFINE_MEMORY_LOAD_STORE_OPCODE(name)                                 \
+  Result BinaryReaderLogging::name(Opcode opcode, Index memidx,               \
+                                   Address alignment_log2, Address offset) {  \
+    LOGF(#name "(opcode: \"%s\" (%u), memidx: %" PRIindex                     \
+               ", align log2: %" PRIaddress ", offset: %" PRIaddress ")\n",   \
+         opcode.GetName(), opcode.GetCode(), memidx, alignment_log2, offset); \
+    return reader_->name(opcode, memidx, alignment_log2, offset);             \
+  }
+
 #define DEFINE_SIMD_LOAD_STORE_LANE_OPCODE(name)                             \
   Result BinaryReaderLogging::name(Opcode opcode, Address alignment_log2,    \
                                    Address offset, uint64_t value) {         \
@@ -806,16 +837,16 @@ DEFINE0(OnElseExpr)
 DEFINE0(OnEndExpr)
 DEFINE_INDEX_DESC(OnGlobalGetExpr, "index")
 DEFINE_INDEX_DESC(OnGlobalSetExpr, "index")
-DEFINE_LOAD_STORE_OPCODE(OnLoadExpr);
+DEFINE_MEMORY_LOAD_STORE_OPCODE(OnLoadExpr);
 DEFINE_INDEX_DESC(OnLocalGetExpr, "index")
 DEFINE_INDEX_DESC(OnLocalSetExpr, "index")
 DEFINE_INDEX_DESC(OnLocalTeeExpr, "index")
-DEFINE0(OnMemoryCopyExpr)
+DEFINE_INDEX_INDEX(OnMemoryCopyExpr, "src_memory_index", "dest_memory_index")
 DEFINE_INDEX(OnDataDropExpr)
-DEFINE0(OnMemoryFillExpr)
-DEFINE0(OnMemoryGrowExpr)
-DEFINE_INDEX(OnMemoryInitExpr)
-DEFINE0(OnMemorySizeExpr)
+DEFINE_INDEX(OnMemoryFillExpr)
+DEFINE_INDEX(OnMemoryGrowExpr)
+DEFINE_INDEX_INDEX(OnMemoryInitExpr, "segment_index", "memory_index")
+DEFINE_INDEX(OnMemorySizeExpr)
 DEFINE_INDEX_INDEX(OnTableCopyExpr, "dst_index", "src_index")
 DEFINE_INDEX(OnElemDropExpr)
 DEFINE_INDEX_INDEX(OnTableInitExpr, "segment_index", "table_index")
@@ -835,7 +866,7 @@ DEFINE_INDEX_INDEX(OnReturnCallIndirectExpr, "sig_index", "table_index")
 DEFINE0(OnReturnExpr)
 DEFINE_LOAD_STORE_OPCODE(OnLoadSplatExpr);
 DEFINE_LOAD_STORE_OPCODE(OnLoadZeroExpr);
-DEFINE_LOAD_STORE_OPCODE(OnStoreExpr);
+DEFINE_MEMORY_LOAD_STORE_OPCODE(OnStoreExpr);
 DEFINE_INDEX_DESC(OnThrowExpr, "tag_index")
 DEFINE0(OnUnreachableExpr)
 DEFINE_OPCODE(OnUnaryExpr)
@@ -882,7 +913,13 @@ DEFINE_INDEX_INDEX(OnInitExprRefFunc, "index", "func_index")
 
 DEFINE_BEGIN(BeginDylinkSection)
 DEFINE_INDEX(OnDylinkNeededCount)
+DEFINE_INDEX(OnDylinkExportCount)
+DEFINE_INDEX(OnDylinkImportCount)
 DEFINE_END(EndDylinkSection)
+
+DEFINE_BEGIN(BeginTargetFeaturesSection)
+DEFINE_INDEX(OnFeatureCount)
+DEFINE_END(EndTargetFeaturesSection)
 
 DEFINE_BEGIN(BeginLinkingSection)
 DEFINE_INDEX(OnSymbolCount)
@@ -951,10 +988,6 @@ Result BinaryReaderLogging::OnOpcodeBlockSig(Type sig_type) {
 
 Result BinaryReaderLogging::OnOpcodeType(Type type) {
   return reader_->OnOpcodeType(type);
-}
-
-Result BinaryReaderLogging::OnEndFunc() {
-  return reader_->OnEndFunc();
 }
 
 }  // namespace wabt
