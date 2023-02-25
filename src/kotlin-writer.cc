@@ -38,6 +38,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <string_view>
 #include <utility>
 
 #include "src/cast.h"
@@ -46,7 +47,7 @@
 #include "src/literal.h"
 #include "src/set-util.h"
 #include "src/stream.h"
-#include "src/string-view.h"
+#include "src/string-util.h"
 
 #define INDENT_SIZE 2
 
@@ -269,26 +270,26 @@ class KotlinWriter {
 
   static char MangleType(Type);
   static std::string MangleTypes(const TypeVector&);
-  static std::string MangleName(string_view);
-  static std::string MangleFuncName(string_view,
+  static std::string MangleName(std::string_view);
+  static std::string MangleFuncName(std::string_view,
                                     const TypeVector& param_types,
                                     const TypeVector& result_types);
-  static std::string MangleGlobalName(string_view, Type);
-  static std::string LegalizeName(string_view);
-  static std::string ExportName(string_view mangled_name);
-  std::string DefineName(SymbolSet*, string_view);
+  static std::string MangleGlobalName(std::string_view, Type);
+  static std::string LegalizeName(std::string_view);
+  static std::string ExportName(std::string_view mangled_name);
+  std::string DefineName(SymbolSet*, std::string_view);
   std::string DefineImportName(const std::string& name,
-                               string_view module_name,
-                               string_view mangled_field_name,
+                               std::string_view module_name,
+                               std::string_view mangled_field_name,
                                Type type);
   std::string DefineImportName(const std::string& name,
-                               string_view module_name,
-                               string_view mangled_field_name,
+                               std::string_view module_name,
+                               std::string_view mangled_field_name,
                                ExternalKind type);
   std::string DefineGlobalScopeName(const std::string&, Type);
   std::string DefineGlobalScopeName(const std::string&, ExternalKind);
   std::string DefineLocalScopeName(const std::string&);
-  std::string DefineStackVarName(Index, Type, string_view);
+  std::string DefineStackVarName(Index, Type, std::string_view);
   void DefineCallIndirect(Index, const FuncDeclaration&);
 
   void Indent(int size = INDENT_SIZE);
@@ -308,7 +309,7 @@ class KotlinWriter {
   }
 
   void WriteValue() {}
-  void WriteValue(string_view);
+  void WriteValue(std::string_view);
   void WriteValue(const Const&);
   void WriteValue(const GlobalVar&);
   void WriteValue(const Var&);
@@ -333,7 +334,7 @@ class KotlinWriter {
   void Write(OpenBrace);
   void Write(CloseBrace);
   void Write(Index);
-  void Write(string_view);
+  void Write(std::string_view);
   void Write(const LocalName&);
   void Write(const GlobalName&);
   void Write(const ExternalPtr&);
@@ -631,7 +632,7 @@ std::string KotlinWriter::MangleTypes(const TypeVector& types) {
 }
 
 // static
-std::string KotlinWriter::MangleName(string_view name) {
+std::string KotlinWriter::MangleName(std::string_view name) {
   const char kPrefix = 'Z';
   std::string result = "Z_";
 
@@ -650,7 +651,7 @@ std::string KotlinWriter::MangleName(string_view name) {
 }
 
 // static
-std::string KotlinWriter::MangleFuncName(string_view name,
+std::string KotlinWriter::MangleFuncName(std::string_view name,
                                          const TypeVector& param_types,
                                          const TypeVector& result_types) {
   std::string sig = MangleTypes(result_types) + MangleTypes(param_types);
@@ -658,18 +659,18 @@ std::string KotlinWriter::MangleFuncName(string_view name,
 }
 
 // static
-std::string KotlinWriter::MangleGlobalName(string_view name, Type type) {
+std::string KotlinWriter::MangleGlobalName(std::string_view name, Type type) {
   std::string sig(1, MangleType(type));
   return MangleName(name) + MangleName(sig);
 }
 
 // static
-std::string KotlinWriter::ExportName(string_view mangled_name) {
-  return mangled_name.to_string();
+std::string KotlinWriter::ExportName(std::string_view mangled_name) {
+  return std::string(mangled_name);
 }
 
 // static
-std::string KotlinWriter::LegalizeName(string_view name) {
+std::string KotlinWriter::LegalizeName(std::string_view name) {
   if (name.empty())
     return "w2k_";
 
@@ -687,7 +688,7 @@ std::string KotlinWriter::LegalizeName(string_view name) {
   return result;
 }
 
-std::string KotlinWriter::DefineName(SymbolSet* set, string_view name) {
+std::string KotlinWriter::DefineName(SymbolSet* set, std::string_view name) {
   std::string legal = LegalizeName(name);
   if (set->find(legal) != set->end()) {
     std::string base = legal + "_";
@@ -700,7 +701,7 @@ std::string KotlinWriter::DefineName(SymbolSet* set, string_view name) {
   return legal;
 }
 
-string_view StripLeadingDollar(string_view name) {
+std::string_view StripLeadingDollar(std::string_view name) {
   if (!name.empty() && name[0] == '$') {
     name.remove_prefix(1);
   }
@@ -708,10 +709,10 @@ string_view StripLeadingDollar(string_view name) {
 }
 
 std::string KotlinWriter::DefineImportName(const std::string& name,
-                                           string_view module,
-                                           string_view mangled_field_name,
+                                           std::string_view module,
+                                           std::string_view mangled_field_name,
                                            Type type) {
-  std::string mangled = mangled_field_name.to_string();
+  std::string mangled(mangled_field_name);
   import_syms_.insert(name);
   std::string unique = DefineName(&global_syms_, mangled);
   global_sym_map_.insert(SymbolMap::value_type(name, unique));
@@ -720,10 +721,10 @@ std::string KotlinWriter::DefineImportName(const std::string& name,
 }
 
 std::string KotlinWriter::DefineImportName(const std::string& name,
-                                           string_view module,
-                                           string_view mangled_field_name,
+                                           std::string_view module,
+                                           std::string_view mangled_field_name,
                                            ExternalKind type) {
-  std::string mangled = mangled_field_name.to_string();
+  std::string mangled(mangled_field_name);
   import_syms_.insert(name);
   std::string unique = DefineName(&global_syms_, mangled);
   global_sym_map_.insert(SymbolMap::value_type(name, unique));
@@ -755,7 +756,7 @@ std::string KotlinWriter::DefineLocalScopeName(const std::string& name) {
 
 std::string KotlinWriter::DefineStackVarName(Index index,
                                              Type type,
-                                             string_view name) {
+                                             std::string_view name) {
   std::string unique = DefineName(&local_syms_, name);
   StackTypePair stp = {index, type};
   stack_var_sym_map_.insert(StackVarSymbolMap::value_type(stp, unique));
@@ -838,11 +839,11 @@ void KotlinWriter::Write(Index index) {
   Writef("%" PRIindex, index);
 }
 
-void KotlinWriter::Write(string_view s) {
+void KotlinWriter::Write(std::string_view s) {
   WriteData(s.data(), s.size());
 }
 
-void KotlinWriter::WriteValue(string_view s) {
+void KotlinWriter::WriteValue(std::string_view s) {
   WriteValueData(s.data(), s.size());
 }
 

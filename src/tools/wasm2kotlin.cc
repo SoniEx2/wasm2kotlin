@@ -120,17 +120,17 @@ static void ParseOptions(int argc, char** argv) {
   }
 }
 
-static string_view get_classname(string_view s) {
+static std::string_view get_classname(std::string_view s) {
   size_t pos = s.find_last_of('/');
-  string_view thing = s;
+  std::string_view thing = s;
   if (pos < s.length()) {
     thing = s.substr(pos);
   }
   while (thing[0] == '/') {
     thing = thing.substr(1);
   }
-  string_view ext = thing.substr(thing.find_last_of('.'));
-  string_view result = thing;
+  std::string_view ext = thing.substr(thing.find_last_of('.'));
+  std::string_view result = thing;
 
   if (ext == ".kt")
     result.remove_suffix(ext.length());
@@ -174,7 +174,7 @@ int ProgramMain(int argc, char** argv) {
           FileStream kotlin_stream(s_outfile.c_str());
           std::string class_name = std::move(s_class);
           if (class_name.empty()) {
-            class_name = get_classname(s_outfile).to_string();
+            class_name = get_classname(s_outfile);
           }
           result =
               WriteKotlin(&kotlin_stream, class_name.c_str(), s_package.c_str(),
