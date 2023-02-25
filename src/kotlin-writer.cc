@@ -1833,9 +1833,8 @@ void KotlinWriter::WriteCallIndirectDefinitions() {
 void KotlinWriter::WriteStackVarDeclarations() {
   for (Type type : {Type::I32, Type::I64, Type::F32, Type::F64}) {
     size_t count = 0;
-    for (const auto& pair : stack_var_sym_map_) {
-      Type stp_type = pair.first.second;
-      const std::string& name = pair.second;
+    for (const auto& [pair, name] : stack_var_sym_map_) {
+      Type stp_type = pair.second;
 
       if (stp_type == type) {
         if (count == 0) {

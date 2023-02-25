@@ -496,8 +496,8 @@ Result ResolveFuncTypes(Module* module, Errors* errors) {
         // local variables share the same index space, we need to increment the
         // local indexes bound to a given name by the number of parameters in
         // the function.
-        for (auto& pair : func->bindings) {
-          pair.second.index += func->GetNumParams();
+        for (auto& [name, binding] : func->bindings) {
+          binding.index += func->GetNumParams();
         }
       }
 
@@ -583,8 +583,8 @@ TokenTypePair WastParser::PeekPair() {
   return TokenTypePair{{Peek(), Peek(1)}};
 }
 
-bool WastParser::PeekMatch(TokenType type) {
-  return Peek() == type;
+bool WastParser::PeekMatch(TokenType type, size_t n) {
+  return Peek(n) == type;
 }
 
 bool WastParser::PeekMatchLpar(TokenType type) {
@@ -1505,16 +1505,11 @@ Result WastParser::ParseImportModuleField(Module* module) {
       Consume();
       ParseBindVarOpt(&name);
       auto import = MakeUnique<FuncImport>(name);
-      if (PeekMatchLpar(TokenType::Type)) {
-        import->func.decl.has_func_type = true;
-        CHECK_RESULT(ParseTypeUseOpt(&import->func.decl));
-        EXPECT(Rpar);
-      } else {
-        CHECK_RESULT(
-            ParseFuncSignature(&import->func.decl.sig, &import->func.bindings));
-        CHECK_RESULT(ErrorIfLpar({"param", "result"}));
-        EXPECT(Rpar);
-      }
+      CHECK_RESULT(ParseTypeUseOpt(&import->func.decl));
+      CHECK_RESULT(
+          ParseFuncSignature(&import->func.decl.sig, &import->func.bindings));
+      CHECK_RESULT(ErrorIfLpar({"param", "result"}));
+      EXPECT(Rpar);
       field = MakeUnique<ImportModuleField>(std::move(import), loc);
       break;
     }
@@ -1940,6 +1935,48 @@ Result WastParser::ParseMemoryLoadStoreInstr(Location loc,
 }
 
 template <typename T>
+Result WastParser::ParseSIMDLoadStoreInstr(Location loc,
+                                           Token token,
+                                           std::unique_ptr<Expr>* out_expr) {
+  ErrorUnlessOpcodeEnabled(token);
+
+  Var memidx(0, loc);
+
+  if (options_->features.multi_memory_enabled()) {
+    // We have to be a little careful when reading the memeory index.
+    // If there is just a single integer folloing the instruction that
+    // represents the lane index, so we check for either a pair of intergers
+    // or an integers followed by offset= or align=.
+    bool try_read_mem_index = true;
+    if (PeekMatch(TokenType::Nat)) {
+      // The next token could be a memory index or a lane index
+      if (!PeekMatch(TokenType::OffsetEqNat, 1) &&
+          !PeekMatch(TokenType::AlignEqNat, 1) &&
+          !PeekMatch(TokenType::Nat, 1)) {
+        try_read_mem_index = false;
+      }
+    }
+    if (try_read_mem_index) {
+      CHECK_RESULT(ParseMemidx(loc, &memidx));
+    }
+  }
+  Address offset;
+  Address align;
+  ParseOffsetOpt(&offset);
+  ParseAlignOpt(&align);
+
+  uint64_t lane_idx = 0;
+  Result result = ParseSimdLane(loc, &lane_idx);
+
+  if (Failed(result)) {
+    return Result::Error;
+  }
+
+  out_expr->reset(new T(token.opcode(), memidx, align, offset, lane_idx, loc));
+  return Result::Ok;
+}
+
+template <typename T>
 Result WastParser::ParseMemoryExpr(Location loc,
                                    std::unique_ptr<Expr>* out_expr) {
   Var memidx;
@@ -2346,44 +2383,14 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
     }
 
     case TokenType::SimdLoadLane: {
-      Token token = Consume();
-      ErrorUnlessOpcodeEnabled(token);
-
-      Address offset;
-      Address align;
-      ParseOffsetOpt(&offset);
-      ParseAlignOpt(&align);
-
-      uint64_t lane_idx = 0;
-      Result result = ParseSimdLane(loc, &lane_idx);
-
-      if (Failed(result)) {
-        return Result::Error;
-      }
-
-      out_expr->reset(
-          new SimdLoadLaneExpr(token.opcode(), align, offset, lane_idx, loc));
+      CHECK_RESULT(
+          ParseSIMDLoadStoreInstr<SimdLoadLaneExpr>(loc, Consume(), out_expr));
       break;
     }
 
     case TokenType::SimdStoreLane: {
-      Token token = Consume();
-      ErrorUnlessOpcodeEnabled(token);
-
-      Address offset;
-      Address align;
-      ParseOffsetOpt(&offset);
-      ParseAlignOpt(&align);
-
-      uint64_t lane_idx = 0;
-      Result result = ParseSimdLane(loc, &lane_idx);
-
-      if (Failed(result)) {
-        return Result::Error;
-      }
-
-      out_expr->reset(
-          new SimdStoreLaneExpr(token.opcode(), align, offset, lane_idx, loc));
+      CHECK_RESULT(
+          ParseSIMDLoadStoreInstr<SimdStoreLaneExpr>(loc, Consume(), out_expr));
       break;
     }
 
