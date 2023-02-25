@@ -227,6 +227,7 @@ bool IsCommand(TokenTypePair pair) {
   }
 
   switch (pair[1]) {
+    case TokenType::AssertException:
     case TokenType::AssertExhaustion:
     case TokenType::AssertInvalid:
     case TokenType::AssertMalformed:
@@ -321,11 +322,12 @@ Result CheckTypeIndex(const Location& loc,
                       Errors* errors) {
   // Types must match exactly; no subtyping should be allowed.
   if (actual != expected) {
-    errors->emplace_back(ErrorLevel::Error, loc,
-                         StringPrintf("type mismatch for %s %" PRIindex
-                                      " of %s. got %s, expected %s",
-                                      index_kind, index, desc, actual.GetName(),
-                                      expected.GetName()));
+    errors->emplace_back(
+        ErrorLevel::Error, loc,
+        StringPrintf("type mismatch for %s %" PRIindex
+                     " of %s. got %s, expected %s",
+                     index_kind, index, desc, actual.GetName().c_str(),
+                     expected.GetName().c_str()));
     return Result::Error;
   }
   return Result::Ok;
@@ -494,7 +496,7 @@ Result ResolveFuncTypes(Module* module, Errors* errors) {
         // local variables share the same index space, we need to increment the
         // local indexes bound to a given name by the number of parameters in
         // the function.
-        for (auto& pair: func->bindings) {
+        for (auto& pair : func->bindings) {
           pair.second.index += func->GetNumParams();
         }
       }
@@ -876,7 +878,7 @@ Result WastParser::ParseValueType(Var* out_type) {
   }
 
   if (!is_enabled) {
-    Error(token.loc, "value type not allowed: %s", type.GetName());
+    Error(token.loc, "value type not allowed: %s", type.GetName().c_str());
     return Result::Error;
   }
 
@@ -922,7 +924,7 @@ Result WastParser::ParseRefKind(Type* out_type) {
        !options_->features.reference_types_enabled()) ||
       ((type == Type::Struct || type == Type::Array) &&
        !options_->features.gc_enabled())) {
-    Error(token.loc, "value type not allowed: %s", type.GetName());
+    Error(token.loc, "value type not allowed: %s", type.GetName().c_str());
     return Result::Error;
   }
 
@@ -940,7 +942,7 @@ Result WastParser::ParseRefType(Type* out_type) {
   Type type = token.type();
   if (type == Type::ExternRef &&
       !options_->features.reference_types_enabled()) {
-    Error(token.loc, "value type not allowed: %s", type.GetName());
+    Error(token.loc, "value type not allowed: %s", type.GetName().c_str());
     return Result::Error;
   }
 
@@ -1964,8 +1966,8 @@ Result WastParser::ParseSimdLane(Location loc, uint64_t* lane_idx) {
 
   Literal literal = Consume().literal();
 
-  Result result = ParseInt64(literal.text.begin(), literal.text.end(),
-                             lane_idx, ParseIntType::UnsignedOnly);
+  Result result = ParseInt64(literal.text.begin(), literal.text.end(), lane_idx,
+                             ParseIntType::UnsignedOnly);
 
   if (Failed(result)) {
     Error(loc, "invalid literal \"" PRIstringview "\"",
@@ -2359,7 +2361,8 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
         return Result::Error;
       }
 
-      out_expr->reset(new SimdLoadLaneExpr(token.opcode(), align, offset, lane_idx, loc));
+      out_expr->reset(
+          new SimdLoadLaneExpr(token.opcode(), align, offset, lane_idx, loc));
       break;
     }
 
@@ -2379,7 +2382,8 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
         return Result::Error;
       }
 
-      out_expr->reset(new SimdStoreLaneExpr(token.opcode(), align, offset, lane_idx, loc));
+      out_expr->reset(
+          new SimdStoreLaneExpr(token.opcode(), align, offset, lane_idx, loc));
       break;
     }
 
@@ -2398,8 +2402,7 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
         values.set_u8(lane, static_cast<uint8_t>(lane_idx));
       }
 
-      out_expr->reset(
-          new SimdShuffleOpExpr(token.opcode(), values, loc));
+      out_expr->reset(new SimdShuffleOpExpr(token.opcode(), values, loc));
       break;
     }
 
@@ -2427,13 +2430,11 @@ Result WastParser::ParseSimdV128Const(Const* const_,
     case TokenType::F32X4: { lane_count = 4; integer = false; break; }
     case TokenType::F64X2: { lane_count = 2; integer = false; break; }
     default: {
-      Error(
-        const_->loc,
-        "Unexpected type at start of simd constant. "
-        "Expected one of: i8x16, i16x8, i32x4, i64x2, f32x4, f64x2. "
-        "Found \"%s\".",
-        GetTokenTypeName(token_type)
-      );
+      Error(const_->loc,
+            "Unexpected type at start of simd constant. "
+            "Expected one of: i8x16, i16x8, i32x4, i64x2, f32x4, f64x2. "
+            "Found \"%s\".",
+            GetTokenTypeName(token_type));
       return Result::Error;
     }
   }
@@ -3114,6 +3115,9 @@ Result WastParser::ParseCommandList(Script* script,
 Result WastParser::ParseCommand(Script* script, CommandPtr* out_command) {
   WABT_TRACE(ParseCommand);
   switch (Peek(1)) {
+    case TokenType::AssertException:
+      return ParseAssertExceptionCommand(out_command);
+
     case TokenType::AssertExhaustion:
       return ParseAssertExhaustionCommand(out_command);
 
@@ -3152,6 +3156,12 @@ Result WastParser::ParseCommand(Script* script, CommandPtr* out_command) {
       assert(!"ParseCommand should only be called when IsCommand() is true");
       return Result::Error;
   }
+}
+
+Result WastParser::ParseAssertExceptionCommand(CommandPtr* out_command) {
+  WABT_TRACE(ParseAssertExceptionCommand);
+  return ParseAssertActionCommand<AssertExceptionCommand>(
+      TokenType::AssertException, out_command);
 }
 
 Result WastParser::ParseAssertExhaustionCommand(CommandPtr* out_command) {
@@ -3244,7 +3254,7 @@ Result WastParser::ParseModuleCommand(Script* script, CommandPtr* out_command) {
                    &errors, &module);
       module.name = bsm->name;
       module.loc = bsm->loc;
-      for (const auto& error: errors) {
+      for (const auto& error : errors) {
         assert(error.error_level == ErrorLevel::Error);
         if (error.loc.offset == kInvalidOffset) {
           Error(bsm->loc, "error in binary module: %s", error.message.c_str());

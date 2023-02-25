@@ -80,7 +80,7 @@ void BinaryReaderLogging::LogType(Type type) {
   if (type.IsIndex()) {
     LOGF_NOINDENT("typeidx[%d]", type.GetIndex());
   } else {
-    LOGF_NOINDENT("%s", type.GetName());
+    LOGF_NOINDENT("%s", type.GetName().c_str());
   }
 }
 
@@ -208,7 +208,7 @@ Result BinaryReaderLogging::OnImportTable(Index import_index,
   SPrintLimits(buf, sizeof(buf), elem_limits);
   LOGF("OnImportTable(import_index: %" PRIindex ", table_index: %" PRIindex
        ", elem_type: %s, %s)\n",
-       import_index, table_index, elem_type.GetName(), buf);
+       import_index, table_index, elem_type.GetName().c_str(), buf);
   return reader_->OnImportTable(import_index, module_name, field_name,
                                 table_index, elem_type, elem_limits);
 }
@@ -236,7 +236,8 @@ Result BinaryReaderLogging::OnImportGlobal(Index import_index,
   LOGF("OnImportGlobal(import_index: %" PRIindex ", global_index: %" PRIindex
        ", type: %s, mutable: "
        "%s)\n",
-       import_index, global_index, type.GetName(), mutable_ ? "true" : "false");
+       import_index, global_index, type.GetName().c_str(),
+       mutable_ ? "true" : "false");
   return reader_->OnImportGlobal(import_index, module_name, field_name,
                                  global_index, type, mutable_);
 }
@@ -259,7 +260,7 @@ Result BinaryReaderLogging::OnTable(Index index,
   char buf[100];
   SPrintLimits(buf, sizeof(buf), elem_limits);
   LOGF("OnTable(index: %" PRIindex ", elem_type: %s, %s)\n", index,
-       elem_type.GetName(), buf);
+       elem_type.GetName().c_str(), buf);
   return reader_->OnTable(index, elem_type, elem_limits);
 }
 
@@ -272,7 +273,7 @@ Result BinaryReaderLogging::OnMemory(Index index, const Limits* page_limits) {
 
 Result BinaryReaderLogging::BeginGlobal(Index index, Type type, bool mutable_) {
   LOGF("BeginGlobal(index: %" PRIindex ", type: %s, mutable: %s)\n", index,
-       type.GetName(), mutable_ ? "true" : "false");
+       type.GetName().c_str(), mutable_ ? "true" : "false");
   return reader_->BeginGlobal(index, type, mutable_);
 }
 
@@ -295,7 +296,7 @@ Result BinaryReaderLogging::OnLocalDecl(Index decl_index,
                                         Index count,
                                         Type type) {
   LOGF("OnLocalDecl(index: %" PRIindex ", count: %" PRIindex ", type: %s)\n",
-       decl_index, count, type.GetName());
+       decl_index, count, type.GetName().c_str());
   return reader_->OnLocalDecl(decl_index, count, type);
 }
 
@@ -412,7 +413,7 @@ Result BinaryReaderLogging::BeginElemSegment(Index index,
 
 Result BinaryReaderLogging::OnElemSegmentElemType(Index index, Type elem_type) {
   LOGF("OnElemSegmentElemType(index: %" PRIindex ", type: %s)\n", index,
-       elem_type.GetName());
+       elem_type.GetName().c_str());
   return reader_->OnElemSegmentElemType(index, elem_type);
 }
 
@@ -491,48 +492,6 @@ Result BinaryReaderLogging::OnNameEntry(NameSectionSubsection type,
   return reader_->OnNameEntry(type, index, name);
 }
 
-Result BinaryReaderLogging::OnInitExprF32ConstExpr(Index index,
-                                                   uint32_t value_bits) {
-  float value;
-  memcpy(&value, &value_bits, sizeof(value));
-  LOGF("OnInitExprF32ConstExpr(index: %" PRIindex ", value: %g (0x04%x))\n",
-       index, value, value_bits);
-  return reader_->OnInitExprF32ConstExpr(index, value_bits);
-}
-
-Result BinaryReaderLogging::OnInitExprF64ConstExpr(Index index,
-                                                   uint64_t value_bits) {
-  double value;
-  memcpy(&value, &value_bits, sizeof(value));
-  LOGF("OnInitExprF64ConstExpr(index: %" PRIindex " value: %g (0x08%" PRIx64
-       "))\n",
-       index, value, value_bits);
-  return reader_->OnInitExprF64ConstExpr(index, value_bits);
-}
-
-Result BinaryReaderLogging::OnInitExprV128ConstExpr(Index index,
-                                                    v128 value_bits) {
-  LOGF("OnInitExprV128ConstExpr(index: %" PRIindex
-       " value: ( 0x%08x 0x%08x 0x%08x 0x%08x))\n",
-       index, value_bits.u32(0), value_bits.u32(1), value_bits.u32(2),
-       value_bits.u32(3));
-  return reader_->OnInitExprV128ConstExpr(index, value_bits);
-}
-
-Result BinaryReaderLogging::OnInitExprI32ConstExpr(Index index,
-                                                   uint32_t value) {
-  LOGF("OnInitExprI32ConstExpr(index: %" PRIindex ", value: %u)\n", index,
-       value);
-  return reader_->OnInitExprI32ConstExpr(index, value);
-}
-
-Result BinaryReaderLogging::OnInitExprI64ConstExpr(Index index,
-                                                   uint64_t value) {
-  LOGF("OnInitExprI64ConstExpr(index: %" PRIindex ", value: %" PRIu64 ")\n",
-       index, value);
-  return reader_->OnInitExprI64ConstExpr(index, value);
-}
-
 Result BinaryReaderLogging::OnDylinkInfo(uint32_t mem_size,
                                          uint32_t mem_align,
                                          uint32_t table_size,
@@ -566,8 +525,7 @@ Result BinaryReaderLogging::OnDylinkImport(string_view module,
   return reader_->OnDylinkImport(module, name, flags);
 }
 
-Result BinaryReaderLogging::OnRelocCount(Index count,
-                                         Index section_index) {
+Result BinaryReaderLogging::OnRelocCount(Index count, Index section_index) {
   LOGF("OnRelocCount(count: %" PRIindex ", section: %" PRIindex ")\n", count,
        section_index);
   return reader_->OnRelocCount(count, section_index);
@@ -644,7 +602,7 @@ Result BinaryReaderLogging::OnTableSymbol(Index index,
                                           string_view name,
                                           Index table_index) {
   LOGF("OnTableSymbol(name: " PRIstringview " flags: 0x%x index: %" PRIindex
-           ")\n",
+       ")\n",
        WABT_PRINTF_STRING_VIEW_ARG(name), flags, table_index);
   return reader_->OnTableSymbol(index, flags, name, table_index);
 }
@@ -699,10 +657,10 @@ Result BinaryReaderLogging::OnComdatEntry(ComdatType kind, Index index) {
     return reader_->name(value);                  \
   }
 
-#define DEFINE_TYPE(name)                       \
-  Result BinaryReaderLogging::name(Type type) { \
-    LOGF(#name "(%s)\n", type.GetName());       \
-    return reader_->name(type);                 \
+#define DEFINE_TYPE(name)                         \
+  Result BinaryReaderLogging::name(Type type) {   \
+    LOGF(#name "(%s)\n", type.GetName().c_str()); \
+    return reader_->name(type);                   \
   }
 
 #define DEFINE_INDEX_DESC(name, desc)                 \
@@ -711,10 +669,11 @@ Result BinaryReaderLogging::OnComdatEntry(ComdatType kind, Index index) {
     return reader_->name(value);                      \
   }
 
-#define DEFINE_INDEX_TYPE(name)                                              \
-  Result BinaryReaderLogging::name(Index value, Type type) {                 \
-    LOGF(#name "(index: %" PRIindex ", type: %s)\n", value, type.GetName()); \
-    return reader_->name(value, type);                                       \
+#define DEFINE_INDEX_TYPE(name)                              \
+  Result BinaryReaderLogging::name(Index value, Type type) { \
+    LOGF(#name "(index: %" PRIindex ", type: %s)\n", value,  \
+         type.GetName().c_str());                            \
+    return reader_->name(value, type);                       \
   }
 
 #define DEFINE_INDEX_INDEX(name, desc0, desc1)                           \
@@ -906,10 +865,6 @@ DEFINE_END(EndNamesSection)
 
 DEFINE_BEGIN(BeginRelocSection)
 DEFINE_END(EndRelocSection)
-
-DEFINE_INDEX_INDEX(OnInitExprGlobalGetExpr, "index", "global_index")
-DEFINE_INDEX_TYPE(OnInitExprRefNull)
-DEFINE_INDEX_INDEX(OnInitExprRefFunc, "index", "func_index")
 
 DEFINE_BEGIN(BeginDylinkSection)
 DEFINE_INDEX(OnDylinkNeededCount)

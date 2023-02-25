@@ -45,7 +45,7 @@ class NameResolver : public ExprVisitor::DelegateNop {
   Result OnCallIndirectExpr(CallIndirectExpr*) override;
   Result OnCatchExpr(TryExpr*, Catch*) override;
   Result OnDelegateExpr(TryExpr*) override;
-  Result OnReturnCallExpr(ReturnCallExpr *) override;
+  Result OnReturnCallExpr(ReturnCallExpr*) override;
   Result OnReturnCallIndirectExpr(ReturnCallIndirectExpr*) override;
   Result OnGlobalGetExpr(GlobalGetExpr*) override;
   Result OnGlobalSetExpr(GlobalSetExpr*) override;
@@ -117,9 +117,7 @@ class NameResolver : public ExprVisitor::DelegateNop {
 };
 
 NameResolver::NameResolver(Script* script, Errors* errors)
-    : errors_(errors),
-      script_(script),
-      visitor_(this) {}
+    : errors_(errors), script_(script), visitor_(this) {}
 
 }  // end anonymous namespace
 
@@ -583,6 +581,7 @@ void NameResolver::VisitCommand(Command* command) {
     case CommandType::AssertReturn:
     case CommandType::AssertTrap:
     case CommandType::AssertExhaustion:
+    case CommandType::AssertException:
     case CommandType::Register:
       /* Don't resolve a module_var, since it doesn't really behave like other
        * vars. You can't reference a module by index. */

@@ -30,8 +30,8 @@
 #include "src/cast.h"
 #include "src/common.h"
 #include "src/expr-visitor.h"
-#include "src/ir.h"
 #include "src/ir-util.h"
+#include "src/ir.h"
 #include "src/literal.h"
 #include "src/stream.h"
 
@@ -91,8 +91,9 @@ struct ExprTree {
 
 class WatWriter : ModuleContext {
  public:
-  WatWriter(Stream* stream, const WriteWatOptions& options,
-            const Module &module)
+  WatWriter(Stream* stream,
+            const WriteWatOptions& options,
+            const Module& module)
       : ModuleContext(module), options_(options), stream_(stream) {}
 
   Result WriteModule();
@@ -421,9 +422,7 @@ void WatWriter::WriteRefKind(Type type, NextChar next_char) {
 }
 
 void WatWriter::WriteType(Type type, NextChar next_char) {
-  const char* type_name = type.GetName();
-  assert(type_name);
-  WritePuts(type_name, next_char);
+  WritePuts(type.GetName().c_str(), next_char);
 }
 
 void WatWriter::WriteTypes(const TypeVector& types, const char* name) {
@@ -676,8 +675,7 @@ Result WatWriter::ExprVisitorDelegate::OnCallIndirectExpr(
   return Result::Ok;
 }
 
-Result WatWriter::ExprVisitorDelegate::OnCallRefExpr(
-    CallRefExpr* expr) {
+Result WatWriter::ExprVisitorDelegate::OnCallRefExpr(CallRefExpr* expr) {
   writer_->WritePutsSpace(Opcode::CallRef_Opcode.GetName());
   return Result::Ok;
 }
@@ -938,8 +936,8 @@ Result WatWriter::ExprVisitorDelegate::BeginTryExpr(TryExpr* expr) {
   return Result::Ok;
 }
 
-Result WatWriter::ExprVisitorDelegate::OnCatchExpr(
-    TryExpr* expr, Catch* catch_) {
+Result WatWriter::ExprVisitorDelegate::OnCatchExpr(TryExpr* expr,
+                                                   Catch* catch_) {
   writer_->Dedent();
   if (catch_->IsCatchAll()) {
     writer_->WritePutsNewline(Opcode::CatchAll_Opcode.GetName());
@@ -1029,7 +1027,8 @@ Result WatWriter::ExprVisitorDelegate::OnSimdLaneOpExpr(SimdLaneOpExpr* expr) {
   return Result::Ok;
 }
 
-Result WatWriter::ExprVisitorDelegate::OnSimdLoadLaneExpr(SimdLoadLaneExpr* expr) {
+Result WatWriter::ExprVisitorDelegate::OnSimdLoadLaneExpr(
+    SimdLoadLaneExpr* expr) {
   writer_->WritePutsSpace(expr->opcode.GetName());
   if (expr->offset) {
     writer_->Writef("offset=%" PRIaddress, expr->offset);

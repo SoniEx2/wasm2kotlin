@@ -79,8 +79,10 @@ class TypeChecker {
   Result OnCallIndirect(const TypeVector& param_types,
                         const TypeVector& result_types);
   Result OnIndexedFuncRef(Index* out_index);
-  Result OnReturnCall(const TypeVector& param_types, const TypeVector& result_types);
-  Result OnReturnCallIndirect(const TypeVector& param_types, const TypeVector& result_types);
+  Result OnReturnCall(const TypeVector& param_types,
+                      const TypeVector& result_types);
+  Result OnReturnCallIndirect(const TypeVector& param_types,
+                              const TypeVector& result_types);
   Result OnCatch(const TypeVector& sig);
   Result OnCompare(Opcode);
   Result OnConst(Type);
@@ -111,7 +113,7 @@ class TypeChecker {
   Result OnTableGrow(Type elem_type);
   Result OnTableSize();
   Result OnTableFill(Type elem_type);
-  Result OnRefFuncExpr(Index type_index);
+  Result OnRefFuncExpr(Index func_type);
   Result OnRefNullExpr(Type type);
   Result OnRefIsNullExpr();
   Result OnRethrow(Index depth);
@@ -129,6 +131,9 @@ class TypeChecker {
   Result OnUnreachable();
   Result EndFunction();
 
+  Result BeginInitExpr(Type type);
+  Result EndInitExpr();
+
   static Result CheckType(Type actual, Type expected);
 
  private:
@@ -141,17 +146,21 @@ class TypeChecker {
                  const TypeVector& result_types);
   Result PopLabel();
   Result CheckLabelType(Label* label, LabelType label_type);
-  Result Check2LabelTypes(Label* label, LabelType label_type1, LabelType label_type2);
-  Result GetThisFunctionLabel(Label **label);
+  Result Check2LabelTypes(Label* label,
+                          LabelType label_type1,
+                          LabelType label_type2);
+  Result GetThisFunctionLabel(Label** label);
   Result PeekType(Index depth, Type* out_type);
   Result PeekAndCheckType(Index depth, Type expected);
   Result DropTypes(size_t drop_count);
   void PushType(Type type);
   void PushTypes(const TypeVector& types);
   Result CheckTypeStackEnd(const char* desc);
-  Result CheckTypes(const TypeVector &actual, const TypeVector &expected);
+  Result CheckTypes(const TypeVector& actual, const TypeVector& expected);
   Result CheckSignature(const TypeVector& sig, const char* desc);
-  Result CheckReturnSignature(const TypeVector& sig, const TypeVector &expected,const char *desc);
+  Result CheckReturnSignature(const TypeVector& sig,
+                              const TypeVector& expected,
+                              const char* desc);
   Result PopAndCheckSignature(const TypeVector& sig, const char* desc);
   Result PopAndCheckCall(const TypeVector& param_types,
                          const TypeVector& result_types,
@@ -177,11 +186,14 @@ class TypeChecker {
     // Minor optimization, check result before constructing the vector to pass
     // to the other overload of PrintStackIfFailed.
     if (Failed(result)) {
-      PrintStackIfFailed(result, desc, {args...});
+      PrintStackIfFailedV(result, desc, {args...}, /*is_end=*/false);
     }
   }
 
-  void PrintStackIfFailed(Result, const char* desc, const TypeVector&);
+  void PrintStackIfFailedV(Result,
+                           const char* desc,
+                           const TypeVector&,
+                           bool is_end);
 
   ErrorCallback error_callback_;
   TypeVector type_stack_;
