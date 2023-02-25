@@ -36,8 +36,8 @@
 #include <cstdlib>
 
 #include "src/apply-names.h"
-#include "src/binary-reader.h"
 #include "src/binary-reader-ir.h"
+#include "src/binary-reader.h"
 #include "src/error-formatter.h"
 #include "src/feature.h"
 #include "src/generate-names.h"
@@ -62,7 +62,7 @@ static bool s_read_debug_names = true;
 static std::unique_ptr<FileStream> s_log_stream;
 
 static const char s_description[] =
-R"(  Read a file in the WebAssembly binary format, and convert it to
+    R"(  Read a file in the WebAssembly binary format, and convert it to
   a Kotlin source file.
 
 examples:
@@ -90,15 +90,11 @@ static void ParseOptions(int argc, char** argv) {
   parser.AddOption(
       'p', "package", "PACKAGE",
       "Package for the generated Kotlin source file, by default none",
-      [](const char* argument) {
-        s_package = argument;
-      });
+      [](const char* argument) { s_package = argument; });
   parser.AddOption(
       'c', "class", "CLASS",
       "Class for the generated module, by default derived from filename.",
-      [](const char* argument) {
-        s_class = argument;
-      });
+      [](const char* argument) { s_class = argument; });
   s_features.AddOptions(&parser);
   parser.AddOption("no-debug-names", "Ignore debug names in the binary file",
                    []() { s_read_debug_names = false; });
@@ -180,16 +176,17 @@ int ProgramMain(int argc, char** argv) {
           if (class_name.empty()) {
             class_name = get_classname(s_outfile).to_string();
           }
-          result = WriteKotlin(&kotlin_stream, class_name.c_str(),
-                             s_package.c_str(), &module, s_write_kotlin_options);
+          result =
+              WriteKotlin(&kotlin_stream, class_name.c_str(), s_package.c_str(),
+                          &module, s_write_kotlin_options);
         } else {
           FileStream stream(stdout);
           std::string class_name = std::move(s_class);
           if (class_name.empty()) {
             class_name = "Wasm";
           }
-          result = WriteKotlin(&stream, class_name.c_str(), s_package.c_str(), &module,
-                             s_write_kotlin_options);
+          result = WriteKotlin(&stream, class_name.c_str(), s_package.c_str(),
+                               &module, s_write_kotlin_options);
         }
       }
     }
@@ -203,4 +200,3 @@ int main(int argc, char** argv) {
   return ProgramMain(argc, argv);
   WABT_CATCH_BAD_ALLOC_AND_EXIT
 }
-
