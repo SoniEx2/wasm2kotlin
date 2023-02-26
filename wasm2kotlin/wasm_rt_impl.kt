@@ -95,12 +95,21 @@ class Memory(initial_pages: Int, max_pages: Int) {
         val temp = mem.duplicate()
         // duplicate resets byte order
         temp.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        if (offset < 0 || offset > temp.limit()) {
+            throw RangeException()
+        }
         temp.position(offset)
         val cb = temp.asCharBuffer();
-        cb.put(bytes_as_ucs2, 0, size/2);
-        if (size/2 != bytes_as_ucs2.length) {
-            // size is odd, so we have an extra byte
-            temp.put(offset+size-1, bytes_as_ucs2[size/2].toByte())
+        try {
+            cb.put(bytes_as_ucs2, 0, size/2);
+            if (size/2 != bytes_as_ucs2.length) {
+                // size is odd, so we have an extra byte
+                temp.put(offset+size-1, bytes_as_ucs2[size/2].toByte())
+            }
+        } catch(e: java.nio.BufferOverflowException) {
+            throw RangeException(null, e)
+        } catch(e: IndexOutOfBoundsException) {
+            throw RangeException(null, e)
         }
     }
 

@@ -93,7 +93,8 @@ def main(args):
     flags = {
         'memory64': '--enable-memory64',
         'multi-memory': '--enable-multi-memory',
-        'exception-handling': '--enable-exceptions'
+        'exception-handling': '--enable-exceptions',
+        'extended-const': '--enable-extended-const',
     }
 
     unimplemented = set([
@@ -102,6 +103,7 @@ def main(args):
         'function-references',
         'threads',
         'annotations',
+        'exception-handling',
         'extended-const',
     ])
 
