@@ -292,6 +292,7 @@ def main(args):
                         help='print the commands that are run.',
                         action='store_true')
     parser.add_argument('file', help='wast file.')
+    parser.add_argument('--enable-multi-memory', action='store_true')
     options = parser.parse_args(args)
 
     with utils.TempDirectory(options.out_dir, 'run-spec-wasm2kotlin-') as out_dir:
@@ -300,7 +301,9 @@ def main(args):
             find_exe.GetWast2JsonExecutable(options.bindir),
             error_cmdline=options.error_cmdline)
         wast2json.verbose = options.print_cmd
-        wast2json.AppendOptionalArgs({'-v': options.verbose})
+        wast2json.AppendOptionalArgs({
+            '-v': options.verbose,
+            '--enable-multi-memory': options.enable_multi_memory})
 
         json_file_path = utils.ChangeDir(
             utils.ChangeExt(options.file, '.json'), out_dir)
@@ -310,6 +313,8 @@ def main(args):
             find_exe.GetWasm2KotlinExecutable(options.bindir),
             error_cmdline=options.error_cmdline)
         wasm2kotlin.verbose = options.print_cmd
+        wasm2kotlin.AppendOptionalArgs({
+            '--enable-multi-memory': options.enable_multi_memory})
 
         kotlinc = utils.Executable(options.kotlinc, *options.cflags)
         kotlinc.verbose = options.print_cmd
