@@ -7,6 +7,8 @@ if [ -n "$GITHUB_EVENT_BEFORE" ] && [ "push" = "$GITHUB_EVENT_NAME" ]; then
   BRANCH="$GITHUB_EVENT_BEFORE"
 elif [ -n "$1" ]; then
   BRANCH="$1"
+elif [ -n "$GITHUB_EVENT_BEFORE" ] && [ "push" = "$GITHUB_EVENT_NAME" ]; then
+  BRANCH="$GITHUB_EVENT_BEFORE"
 elif [ -n "$GITHUB_BASE_REF" ]; then
   BRANCH="origin/$GITHUB_BASE_REF"
 else

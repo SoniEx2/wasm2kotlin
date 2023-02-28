@@ -2043,6 +2043,10 @@ void KotlinWriter::Write(const ExprList& exprs) {
         break;
       }
 
+      case ExprType::CodeMetadata:
+        Write(*cast<CompareExpr>(&expr));
+        break;
+
       case ExprType::Compare:
         Write(*cast<CompareExpr>(&expr));
         break;
