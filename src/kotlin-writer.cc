@@ -1841,12 +1841,7 @@ void KotlinWriter::WriteStackVarDeclarations() {
         if (count == 0) {
           Indent(4);
         }
-        Write("var ", name, ": ", type, " = 0");
-        if (type == Type::F32) {
-          Write(".0f");
-        } else if (type == Type::F64) {
-          Write(".0");
-        }
+        Write("var ", name, ": ", type);
         Write(Newline());
         ++count;
       }
