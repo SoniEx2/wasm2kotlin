@@ -1242,8 +1242,8 @@ void KotlinWriter::WriteSourceTop() {
         "\"VARIABLE_WITH_REDUNDANT_INITIALIZER\", ",
         "\"ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE\")", Newline());
   Write("class ", class_name_,
-        " (moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {");
-  Indent();
+        " (moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String)",
+        OpenBrace());
 }
 
 void KotlinWriter::WriteImport(const char* type,
@@ -1272,13 +1272,13 @@ void KotlinWriter::WriteFuncTypes() {
   Writef("private val func_types: IntArray = IntArray(%" PRIzd ")",
          module_->types.size());
   Write(Newline(), Newline());
-  Write("init /* func_types */ {", Newline());
+  Write("init /* func_types */", OpenBrace(), Newline());
   Index func_type_index = 0;
   for (TypeEntry* type : module_->types) {
     FuncType* func_type = cast<FuncType>(type);
     Index num_params = func_type->GetNumParams();
     Index num_results = func_type->GetNumResults();
-    Write("  func_types[", func_type_index,
+    Write("func_types[", func_type_index,
           "] = wasm_rt_impl.register_func_type(", num_params, ", ",
           num_results);
     for (Index i = 0; i < num_params; ++i) {
@@ -1292,7 +1292,7 @@ void KotlinWriter::WriteFuncTypes() {
     Write(");", Newline());
     ++func_type_index;
   }
-  Write("}", Newline());
+  Write(CloseBrace(), Newline());
 }
 
 void KotlinWriter::WriteImports() {
@@ -1779,10 +1779,9 @@ void KotlinWriter::Write(const Func& func) {
   std::unique_ptr<OutputBuffer> buf = funkotlin_stream_.ReleaseOutputBuffer();
   stream_->WriteData(buf->data.data(), buf->data.size());
 
-  Write(CloseBrace(),
-        " catch(e: StackOverflowError) { throw "
-        "wasm_rt_impl.ExhaustionException(null, e) }",
-        Newline());
+  Write(CloseBrace(), " catch(e: StackOverflowError) ", OpenBrace(),
+        "throw wasm_rt_impl.ExhaustionException(null, e)", Newline(),
+        CloseBrace(), Newline());
 
   Write(CloseBrace());
 
@@ -1965,8 +1964,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
         StackValue sv = PopValue();
         DropTypes(1);
         SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
-        Write("if ((", sv.value, ").inz()) {");
-        Write(GotoLabel(cast<BrIfExpr>(&expr)->var), "}", Newline());
+        Write("if ((", sv.value, ").inz())", OpenBrace());
+        Write(GotoLabel(cast<BrIfExpr>(&expr)->var), CloseBrace(), Newline());
         break;
       }
 
@@ -2016,7 +2015,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         WriteValue(")");
         PushTypes(func.decl.sig.result_types);
         for (Index i = 1; i < num_results; ++i) {
-          WriteValue(".let {", StackVar(num_results - i - 1),
+          WriteValue(".let{", StackVar(num_results - i - 1),
                      "=it.first;it.second}");
         }
         while (value_stack_.size() < type_stack_.size()) {
@@ -2230,7 +2229,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         sv.value = ("(" + sv.value) + ").also ";
         sv.precedence = 2;
         PushValue(sv);
-        WriteValue("{ ", var, " = it }");
+        WriteValue("{", var, "=it}");
         break;
       }
 
