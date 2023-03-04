@@ -272,7 +272,7 @@ def main(args):
                         help='the path to the Kotlin compiler', default=default_compiler)
     parser.add_argument('--kotlin', metavar='PATH',
                         help='the path to the Kotlin runner', default=default_runner)
-    parser.add_argument('--cflags', metavar='FLAGS',
+    parser.add_argument('--ktflags', metavar='FLAGS',
                         help='additional flags for Kotlin compiler.',
                         action='append', default=[])
     parser.add_argument('--compile', help='compile the Kotlin code (default)',
@@ -316,7 +316,8 @@ def main(args):
         wasm2kotlin.AppendOptionalArgs({
             '--enable-multi-memory': options.enable_multi_memory})
 
-        kotlinc = utils.Executable(options.kotlinc, *options.cflags)
+        kotlinc = utils.Executable(options.kotlinc, *options.ktflags,
+                                   forward_stderr=True, forward_stdout=True)
         kotlinc.verbose = options.print_cmd
 
         kotlin = utils.Executable(options.kotlin)

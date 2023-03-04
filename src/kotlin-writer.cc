@@ -1265,6 +1265,9 @@ void KotlinWriter::WriteSourceBottom() {
 }
 
 void KotlinWriter::WriteFuncTypes() {
+  if (!module_->types.size()) {
+    return;
+  }
   Write(Newline());
   Writef("private val func_types: IntArray = IntArray(%" PRIzd ")",
          module_->types.size());
@@ -1454,8 +1457,15 @@ void KotlinWriter::WriteMemory(const std::string& name) {
 }
 
 void KotlinWriter::WriteTables() {
-  if (module_->tables.size() == module_->num_table_imports)
+  if (module_->tables.size() == module_->num_table_imports) {
     return;
+  }
+
+  if (!module_->types.size()) {
+    // If no types are defined then there is no way to use the table
+    // for anything.
+    return;
+  }
 
   Write(Newline());
 
@@ -1536,6 +1546,14 @@ void KotlinWriter::WriteDataInitializers() {
 }
 
 void KotlinWriter::WriteElemInitializers() {
+  if (!module_->types.size()) {
+    // If there are no types there cannot be any table entries either.
+    for (const ElemSegment* elem_segment : module_->elem_segments) {
+      assert(elem_segment->elem_exprs.size() == 0);
+    }
+    return;
+  }
+
   const Table* table = module_->tables.empty() ? nullptr : module_->tables[0];
   bool emit_offset = false;
   for (const ElemSegment* elem_segment : module_->elem_segments) {
