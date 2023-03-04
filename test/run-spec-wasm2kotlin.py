@@ -355,8 +355,8 @@ def main(args):
             main_kt = main_filename
             main_jar = Compile(kotlinc, utils.ChangeExt(main_kt, ".jar"), kotlin_filenames + [main_kt])
 
-        if options.compile and options.run:
-            kotlin.RunWithArgs("-J-ea", "-classpath", main_jar, "wabt.spec_test.SpecTestMain")
+            if options.run:
+                kotlin.RunWithArgs("-J-ea", "-classpath", main_jar, "wabt.spec_test.SpecTestMain")
 
     return 0
 
