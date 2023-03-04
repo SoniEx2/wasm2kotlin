@@ -238,7 +238,7 @@ fun parseInput(s: ByteBuffer, end: Boolean = false): Any? {
         return null
     }
     s.mark()
-    val result = when (val key = s.get().toInt()) {
+    val result: Any = when (s.get().toInt()) {
         0x65 -> End // lowercase 'e' -> End
         0x69 -> { // lowercase 'i' -> number
             val num = readNum(s)
@@ -361,6 +361,7 @@ class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
                     else -> throw RuntimeException()
                 }
             } else {
+                @Suppress("NAME_SHADOWING")
                 val value = BigInteger(value)
                 when (type) {
                     "i32" -> ASSERT_RETURN_I32({ action(command) as Int }, value.toInt(), command)
@@ -404,9 +405,9 @@ class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
                     null -> Array<Any?>(0) { null }
                     is BList -> Array<Any?>(action_args.list.size) {
                         val arg = action_args.list.get(it) as BMap
-                        val type = (arg.get("type") as Bytes).toString()
+                        val valtype = (arg.get("type") as Bytes).toString()
                         val value = BigInteger((arg.get("value") as Bytes).toString())
-                        when (type) {
+                        when (valtype) {
                             "f32" -> Float.fromBits(value.toInt())
                             "f64" -> Double.fromBits(value.toLong())
                             "i32" -> value.toInt()
@@ -431,9 +432,9 @@ class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
     }
 }
 
-fun main(args: Array<String>) {
+fun main() {
     val moduleRegistry = wasm_rt_impl.ModuleRegistry()
-    val spectest = Z_spectest(moduleRegistry, "Z_spectest");
+    Z_spectest(moduleRegistry, "Z_spectest");
     run_spec_tests(moduleRegistry);
 
     print(g_tests_passed);

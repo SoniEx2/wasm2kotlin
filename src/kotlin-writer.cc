@@ -1237,6 +1237,10 @@ void KotlinWriter::WriteSourceTop() {
     Write("package ", package_name_, Newline());
   }
   Write(s_source_includes);
+  Write("@Suppress(\"NAME_SHADOWING\", \"UNUSED_VALUE\", \"UNUSED_VARIABLE\", ",
+        "\"UNUSED_PARAMETER\", \"UNREACHABLE_CODE\", \"UNUSED_EXPRESSION\", ",
+        "\"VARIABLE_WITH_REDUNDANT_INITIALIZER\", ",
+        "\"ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE\")", Newline());
   Write("class ", class_name_,
         " (moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {");
   Indent();
@@ -1533,9 +1537,27 @@ void KotlinWriter::WriteDataInitializers() {
 
 void KotlinWriter::WriteElemInitializers() {
   const Table* table = module_->tables.empty() ? nullptr : module_->tables[0];
+  bool emit_offset = false;
+  for (const ElemSegment* elem_segment : module_->elem_segments) {
+    if (elem_segment->kind == SegmentKind::Passive) {
+      continue;
+    }
+    for (const ExprList& elem_expr : elem_segment->elem_exprs) {
+      // We don't support the bulk-memory proposal here, so we know that we
+      // don't have any passive segments (where ref.null can be used).
+      assert(elem_expr.size() == 1);
+      emit_offset = true;
+      break;
+    }
+    if (emit_offset) {
+      break;
+    }
+  }
 
   Write(Newline(), "init /* table */ ", OpenBrace());
-  Write("var offset: Int = 0;", Newline());
+  if (emit_offset) {
+    Write("var offset: Int", Newline());
+  }
   if (table && module_->num_table_imports == 0) {
     uint32_t max =
         table->elem_limits.has_max ? table->elem_limits.max : UINT32_MAX;
@@ -1549,9 +1571,11 @@ void KotlinWriter::WriteElemInitializers() {
     if (elem_segment->kind == SegmentKind::Passive) {
       continue;
     }
-    Write("offset = ");
-    WriteInitExpr(elem_segment->offset);
-    Write(";", Newline());
+    if (emit_offset) {
+      Write("offset = ");
+      WriteInitExpr(elem_segment->offset);
+      Write(";", Newline());
+    }
 
     size_t i = 0;
     for (const ExprList& elem_expr : elem_segment->elem_exprs) {

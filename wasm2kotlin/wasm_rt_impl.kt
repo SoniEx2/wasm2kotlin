@@ -58,15 +58,18 @@ open class ModuleRegistry {
     }
 
     // TODO add exceptions
+    @Suppress("UNCHECKED_CAST")
     open fun <T: Function<U>, U> importFunc(modname: String, fieldname: String): T {
         return funcs.get(Pair(modname, fieldname)) as T
     }
     open fun importTable(modname: String, fieldname: String): KMutableProperty0<Table> {
         return tables.get(Pair(modname, fieldname)) as KMutableProperty0<Table>
     }
+    @Suppress("UNCHECKED_CAST")
     open fun <T> importGlobal(modname: String, fieldname: String): KMutableProperty0<T> {
         return globals.get(Pair(modname, fieldname)) as KMutableProperty0<T>
     }
+    @Suppress("UNCHECKED_CAST")
     open fun <T> importConstant(modname: String, fieldname: String): KProperty0<T> {
         return constants.get(Pair(modname, fieldname)) as KProperty0<T>
     }
@@ -104,7 +107,7 @@ class Memory(initial_pages: Int, max_pages: Int) {
             cb.put(bytes_as_ucs2, 0, size/2);
             if (size/2 != bytes_as_ucs2.length) {
                 // size is odd, so we have an extra byte
-                temp.put(offset+size-1, bytes_as_ucs2[size/2].toByte())
+                temp.put(offset+size-1, bytes_as_ucs2[size/2].code.toByte())
             }
         } catch(e: java.nio.BufferOverflowException) {
             throw RangeException(null, e)
@@ -122,6 +125,7 @@ class Memory(initial_pages: Int, max_pages: Int) {
         }
     }
 
+    @Suppress("NAME_SHADOWING")
     private fun offsetp(pos: Int, offset: Int): Int {
         val pos = (pos.toLong() and 0xFFFFFFFF) + (offset.toLong() and 0xFFFFFFFF);
         if ((pos and 0xFFFFFFFFL) != pos) {
@@ -230,7 +234,7 @@ class Table(elements: Int, max_elements: Int) {
     }
 }
 
-data class Elem(val type: Int, val func: Function<out Any>) {
+data class Elem(val type: Int, val func: Function<Any>) {
 }
 
 open class WasmException(message: String? = null, cause: Throwable? = null) : RuntimeException(message, cause) {
@@ -282,17 +286,25 @@ fun register_func_type(num_params: Int, num_results: Int, vararg types: Any): In
 
 // NOTE(Soni): these are inline not for "performance" but for code size.
 // kept running into "Method too large", this should help with *some* of them.
+@Suppress("NOTHING_TO_INLINE")
 inline fun Boolean.btoInt(): Int = if (this) 1 else 0
+@Suppress("NOTHING_TO_INLINE")
 inline fun Boolean.btoLong(): Long = if (this) 1L else 0L
 
+@Suppress("NOTHING_TO_INLINE")
 inline fun Int.isz(): Int = if (this == 0) 1 else 0
+@Suppress("NOTHING_TO_INLINE")
 inline fun Long.isz(): Int = if (this == 0L) 1 else 0
+@Suppress("NOTHING_TO_INLINE")
 inline fun Int.inz(): Boolean = this != 0
+@Suppress("NOTHING_TO_INLINE")
 inline fun Long.inz(): Boolean = this != 0L
 
 // NOTE(Soni): to preserve order of evaluation
+@Suppress("NOTHING_TO_INLINE")
 inline fun <T> select(third: T, second: T, first: Int): T = if (first != 0) third else second
 
+@Suppress("UNCHECKED_CAST")
 fun <T> CALL_INDIRECT(table: Table, type: Int, func: Int): T {
     val elem = try {
         table[func]
