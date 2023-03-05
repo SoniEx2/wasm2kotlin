@@ -67,6 +67,22 @@ inline fun <T> ASSERT_RETURN_T(f: () -> T, expected: T, is_equal: (T, T) -> Bool
     }
 }
 
+inline fun <T, U> ASSERT_RETURN_TU(f: () -> (((U) -> Unit) -> T), exp1: T, exp2: U, is_equal1: (T, T) -> Boolean, crossinline is_equal2: (U, U) -> Boolean, name: BMap) {
+    g_tests_run++
+    try {
+        var val2_eq: Boolean = false
+        var val2_str: String = "";
+        val val1: T = (f()) { val2 -> val2_eq = is_equal2(val2, exp2); val2_str = ""+ val2; }
+        if (is_equal1(val1, exp1) && val2_eq) {
+            g_tests_passed++
+        } else {
+            error(StringBuilder("in ").append(name.get("file")).append(":").append(name.get("line")).append(": expected ").append(exp1).append(" and ").append(exp2).append(", got ").append(val1).append(" and ").append(val2_str).append(".").toString(), Exception())
+        }
+    } catch (e: wasm_rt_impl.WasmException) {
+        error(StringBuilder().append(name.get("file")).append(":").append(name.get("line")).append(" trapped.").toString(), e)
+    }
+}
+
 inline fun <T> ASSERT_RETURN_NAN_T(f: () -> T, is_nan_kind: (T) -> Boolean, name: BMap, nan: String) {
     g_tests_run++
     try {
@@ -87,6 +103,10 @@ fun ASSERT_RETURN_I32(f: () -> Int, expected: Int, name: BMap) = ASSERT_RETURN_T
 fun ASSERT_RETURN_I64(f: () -> Long, expected: Long, name: BMap) = ASSERT_RETURN_T(f, expected, ::is_equal_u64, name)
 fun ASSERT_RETURN_F32(f: () -> Float, expected: Float, name: BMap) = ASSERT_RETURN_T(f, expected, ::is_equal_f32, name)
 fun ASSERT_RETURN_F64(f: () -> Double, expected: Double, name: BMap) = ASSERT_RETURN_T(f, expected, ::is_equal_f64, name)
+
+fun ASSERT_RETURN_F64_I32(f: () -> (((Int) -> Unit) -> Double), exp1: Double, exp2: Int, name: BMap) = ASSERT_RETURN_TU(f, exp1, exp2, ::is_equal_f64, ::is_equal_u32, name)
+fun ASSERT_RETURN_I32_F64(f: () -> (((Double) -> Unit) -> Int), exp1: Int, exp2: Double, name: BMap) = ASSERT_RETURN_TU(f, exp1, exp2, ::is_equal_u32, ::is_equal_f64, name)
+fun ASSERT_RETURN_I64_I32(f: () -> (((Int) -> Unit) -> Long), exp1: Long, exp2: Int, name: BMap) = ASSERT_RETURN_TU(f, exp1, exp2, ::is_equal_u64, ::is_equal_u32, name)
 
 fun ASSERT_RETURN_CANONICAL_NAN_F32(f: () -> Float, name: BMap) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f32, name, "canonical")
 fun ASSERT_RETURN_CANONICAL_NAN_F64(f: () -> Double, name: BMap) = ASSERT_RETURN_NAN_T(f, ::is_canonical_nan_f64, name, "canonical")
@@ -350,7 +370,27 @@ class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
 
     fun runAssertReturnCommand(command: BMap) {
         val expected = command.get("expected") as BList
-        if (expected.list.size == 1) {
+        if (expected.list.size == 2) {
+            val type1 = ((expected.list.get(0) as BMap).get("type") as Bytes).toString()
+            val value1 = ((expected.list.get(0) as BMap).get("value") as Bytes).toString()
+            val type2 = ((expected.list.get(1) as BMap).get("type") as Bytes).toString()
+            val value2 = ((expected.list.get(1) as BMap).get("value") as Bytes).toString()
+            if (value1 == "nan:canonical" || value1 == "nan:arithmetic" || value2 == "nan:canonical" || value2 == "nan:arithmetic") {
+                FAIL(command)
+            } else {
+                @Suppress("NAME_SHADOWING")
+                val value1 = BigInteger(value1)
+                @Suppress("NAME_SHADOWING")
+                val value2 = BigInteger(value2)
+                @Suppress("UNCHECKED_CAST")
+                when (type1 + type2) {
+                    "f64i32" -> ASSERT_RETURN_F64_I32({ action(command) as ((Int) -> Unit) -> Double }, Double.fromBits(value1.toLong()), value2.toInt(), command)
+                    "i32f64" -> ASSERT_RETURN_I32_F64({ action(command) as ((Double) -> Unit) -> Int }, value1.toInt(), Double.fromBits(value2.toLong()), command)
+                    "i64i32" -> ASSERT_RETURN_I64_I32({ action(command) as ((Int) -> Unit) -> Long }, value1.toLong(), value2.toInt(), command)
+                    else -> FAIL(command)
+                }
+            }
+        } else if (expected.list.size == 1) {
             val type = ((expected.list.get(0) as BMap).get("type") as Bytes).toString()
             val value = ((expected.list.get(0) as BMap).get("value") as Bytes).toString()
             if (value == "nan:canonical") {
