@@ -77,7 +77,7 @@ class Executable(object):
                 error = Error('Signal raised running "%s": %s\n%s' % (err_cmd_str,
                               signame, stderr))
             elif process.returncode > 0:
-                error = Error('Error running "%s" (%d):\n%s' % (err_cmd_str, process.returncode, stderr))
+                error = Error('Error running "%s" (%d):\n%s\n%s' % (err_cmd_str, process.returncode, stdout, stderr))
         except OSError as e:
             error = Error('Error running "%s": %s' % (err_cmd_str, str(e)))
         return stdout, stderr, error
