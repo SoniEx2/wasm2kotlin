@@ -104,7 +104,6 @@ def main(args):
         'threads',
         'annotations',
         'exception-handling',
-        'extended-const',
     ])
 
     # sanity check to verify that all flags are valid
