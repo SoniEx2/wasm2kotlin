@@ -178,20 +178,20 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
   var spectest_global_f64: Double = 666.0
   
   init {
-      moduleRegistry.exportFunc(name, "Z_printZ_vv", this@Z_spectest::spectest_print);
-      moduleRegistry.exportFunc(name, "Z_print_i32Z_vi", this@Z_spectest::spectest_print_i32);
-      moduleRegistry.exportFunc(name, "Z_print_f32Z_vf", this@Z_spectest::spectest_print_f32);
-      moduleRegistry.exportFunc(name, "Z_print_i32_f32Z_vif", this@Z_spectest::spectest_print_i32_f32);
-      moduleRegistry.exportFunc(name, "Z_print_f64Z_vd", this@Z_spectest::spectest_print_f64);
-      moduleRegistry.exportFunc(name, "Z_print_f64_f64Z_vdd", this@Z_spectest::spectest_print_f64_f64);
+      moduleRegistry.exportFunc(name, "Z_print", this@Z_spectest::spectest_print);
+      moduleRegistry.exportFunc(name, "Z_print_i32", this@Z_spectest::spectest_print_i32);
+      moduleRegistry.exportFunc(name, "Z_print_f32", this@Z_spectest::spectest_print_f32);
+      moduleRegistry.exportFunc(name, "Z_print_i32_f32", this@Z_spectest::spectest_print_i32_f32);
+      moduleRegistry.exportFunc(name, "Z_print_f64", this@Z_spectest::spectest_print_f64);
+      moduleRegistry.exportFunc(name, "Z_print_f64_f64", this@Z_spectest::spectest_print_f64_f64);
 
       moduleRegistry.exportTable(name, "Z_table", this@Z_spectest::spectest_table);
       moduleRegistry.exportMemory(name, "Z_memory", this@Z_spectest::spectest_memory);
 
-      moduleRegistry.exportConstant(name, "Z_global_i32Z_i", this@Z_spectest::spectest_global_i32);
-      moduleRegistry.exportConstant(name, "Z_global_i64Z_j", this@Z_spectest::spectest_global_i64);
-      moduleRegistry.exportConstant(name, "Z_global_f32Z_f", this@Z_spectest::spectest_global_f32);
-      moduleRegistry.exportConstant(name, "Z_global_f64Z_d", this@Z_spectest::spectest_global_f64);
+      moduleRegistry.exportConstant(name, "Z_global_i32", this@Z_spectest::spectest_global_i32);
+      moduleRegistry.exportConstant(name, "Z_global_i64", this@Z_spectest::spectest_global_i64);
+      moduleRegistry.exportConstant(name, "Z_global_f32", this@Z_spectest::spectest_global_f32);
+      moduleRegistry.exportConstant(name, "Z_global_f64", this@Z_spectest::spectest_global_f64);
   }
 
   init {

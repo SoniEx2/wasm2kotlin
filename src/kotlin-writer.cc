@@ -269,12 +269,7 @@ class KotlinWriter {
   static std::string AddressOf(const std::string&, const std::string&);
 
   static char MangleType(Type);
-  static std::string MangleTypes(const TypeVector&);
   static std::string MangleName(std::string_view);
-  static std::string MangleFuncName(std::string_view,
-                                    const TypeVector& param_types,
-                                    const TypeVector& result_types);
-  static std::string MangleGlobalName(std::string_view, Type);
   static std::string LegalizeName(std::string_view);
   static std::string ExportName(std::string_view mangled_name);
   std::string DefineName(SymbolSet*, std::string_view);
@@ -614,18 +609,6 @@ char KotlinWriter::MangleType(Type type) {
 }
 
 // static
-std::string KotlinWriter::MangleTypes(const TypeVector& types) {
-  if (types.empty())
-    return std::string("v");
-
-  std::string result;
-  for (auto type : types) {
-    result += MangleType(type);
-  }
-  return result;
-}
-
-// static
 std::string KotlinWriter::MangleName(std::string_view name) {
   const char kPrefix = 'Z';
   std::string result = "Z_";
@@ -642,20 +625,6 @@ std::string KotlinWriter::MangleName(std::string_view name) {
   }
 
   return result;
-}
-
-// static
-std::string KotlinWriter::MangleFuncName(std::string_view name,
-                                         const TypeVector& param_types,
-                                         const TypeVector& result_types) {
-  std::string sig = MangleTypes(result_types) + MangleTypes(param_types);
-  return MangleName(name) + MangleName(sig);
-}
-
-// static
-std::string KotlinWriter::MangleGlobalName(std::string_view name, Type type) {
-  std::string sig(1, MangleType(type));
-  return MangleName(name) + MangleName(sig);
 }
 
 // static
@@ -1320,8 +1289,7 @@ void KotlinWriter::WriteImports() {
       case ExternalKind::Func: {
         Write("val ");
         const Func& func = cast<FuncImport>(import)->func;
-        mangled = MangleFuncName(import->field_name, func.decl.sig.param_types,
-                                 func.decl.sig.result_types);
+        mangled = MangleName(import->field_name);
         std::string name = DefineImportName(func.name, import->module_name,
                                             mangled, Type::Func);
         Write(name, ": ");
@@ -1340,7 +1308,7 @@ void KotlinWriter::WriteImports() {
           Write("val ");
           type = "Constant";
         }
-        mangled = MangleGlobalName(import->field_name, global.type);
+        mangled = MangleName(import->field_name);
         WriteGlobal(global, DefineImportName(global.name, import->module_name,
                                              mangled, global.type));
         break;
@@ -1642,9 +1610,7 @@ void KotlinWriter::WriteExports() {
     switch (export_->kind) {
       case ExternalKind::Func: {
         const Func* func = module_->GetFunc(export_->var);
-        mangled_name =
-            ExportName(MangleFuncName(export_->name, func->decl.sig.param_types,
-                                      func->decl.sig.result_types));
+        mangled_name = ExportName(MangleName(export_->name));
         internal_name = func->name;
         external_ptr = import_syms_.count(func->name) == 0;
         type = "Func";
@@ -1653,8 +1619,7 @@ void KotlinWriter::WriteExports() {
 
       case ExternalKind::Global: {
         const Global* global = module_->GetGlobal(export_->var);
-        mangled_name =
-            ExportName(MangleGlobalName(export_->name, global->type));
+        mangled_name = ExportName(MangleName(export_->name));
         internal_name = global->name;
         if (global->mutable_) {
           type = "Global";

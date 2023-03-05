@@ -221,22 +221,10 @@ class CWriter(object):
     def _WriteAssertActionCommand(self, command, cmd_out):
         self._Action(command, cmd_out)
 
-    def _ActionSig(self, action, expected):
-        type_ = action['type']
-        result_types = [result['type'] for result in expected]
-        arg_types = [arg['type'] for arg in action.get('args', [])]
-        if type_ == 'invoke':
-            return MangleTypes(result_types) + MangleTypes(arg_types)
-        elif type_ == 'get':
-            return MangleType(result_types[0])
-        else:
-            raise Error('Unexpected action type: %s' % type_)
-
     def _Action(self, command, cmd_out):
         action = command['action']
-        expected = command['expected']
         mangled_module_name = self.GetModulePrefix(action.get('module'))
-        field = (MangleName(action['field']) + MangleName(self._ActionSig(action, expected)))
+        field = MangleName(action['field'])
 
         cmd_out['action'] = command['action']
         cmd_out['expected'] = command['expected']
