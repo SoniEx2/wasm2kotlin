@@ -556,12 +556,6 @@ void KotlinWriter::PushLabel(LabelType label_type,
                              const std::string& name,
                              const FuncSignature& sig,
                              bool used) {
-  // TODO(Soni): Add multi-value support.
-  if ((label_type != LabelType::Func && sig.GetNumParams() != 0) ||
-      sig.GetNumResults() > 1) {
-    UNIMPLEMENTED("multi value support");
-  }
-
   if (label_type == LabelType::Loop)
     label_stack_.emplace_back(label_type, name, sig.param_types,
                               type_stack_.size(), used);
@@ -1035,12 +1029,25 @@ void KotlinWriter::Write(TypeEnum type) {
 }
 
 void KotlinWriter::Write(const ResultType& rt) {
-  if (rt.types.size() > 1) {
-    UNIMPLEMENTED("multi-value");
-  } else if (!rt.types.empty()) {
+  if (rt.types.empty()) {
+    Write("Unit");
+  } else if (rt.types.size() == 1) {
     Write(rt.types[0]);
   } else {
-    Write("Unit");
+    Write("(((");
+    bool first = true;
+    bool second = true;
+    for (auto type : rt.types) {
+      if (!first) {
+        if (!second) {
+          Write(", ");
+        }
+        Write(type);
+        second = false;
+      }
+      first = false;
+    }
+    Write(") -> Unit) -> ", rt.types[0], ")");
   }
 }
 
@@ -1461,12 +1468,6 @@ void KotlinWriter::WriteTables() {
     return;
   }
 
-  if (!module_->types.size()) {
-    // If no types are defined then there is no way to use the table
-    // for anything.
-    return;
-  }
-
   Write(Newline());
 
   assert(module_->tables.size() <= 1);
@@ -1766,10 +1767,20 @@ void KotlinWriter::Write(const Func& func) {
   }
   Write(CloseBrace(), " while (false);", Newline());
 
-  if (!func.decl.sig.result_types.empty()) {
-    // TODO multi-value
-    // Return the top of the stack implicitly.
+  // Return the top of the stack implicitly.
+  Index num_results = func.GetNumResults();
+  if (num_results == 1) {
     Write("return ", StackVar(0), ";", Newline());
+  } else if (num_results >= 2) {
+    Write("return ", OpenBrace());
+    Write("it(");
+    for (Index i = 1; i < num_results; ++i) {
+      if (i != 1) {
+        Write(", ");
+      }
+      Write(StackVar(num_results - i - 1));
+    }
+    Write(");", Newline(), StackVar(num_results - 1), CloseBrace(), Newline());
   }
 
   stream_ = kotlin_stream_;
@@ -1882,7 +1893,12 @@ void KotlinWriter::WriteStackVarDeclarations() {
         if (count == 0) {
           Indent(4);
         }
-        Write("var ", name, ": ", type);
+        Write("var ", name, ": ", type, " = 0");
+        if (type == Type::F32) {
+          Write(".0f");
+        } else if (type == Type::F64) {
+          Write(".0");
+        }
         Write(Newline());
         ++count;
       }
@@ -1994,7 +2010,6 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Index num_params = func.GetNumParams();
         Index num_results = func.GetNumResults();
         assert(type_stack_.size() >= num_params);
-        assert(num_results <= 1);
         std::vector<StackValue> args = PopValues(num_params);
         DropTypes(num_params);
         StackValue sv;
@@ -2008,15 +2023,29 @@ void KotlinWriter::Write(const ExprList& exprs) {
         sv.side_effects.can_trap = true;
         PushValue(sv);
 
+        if (num_results > 1) {
+          WriteValue("(");
+        }
         WriteValue(GlobalName(var.name()), "(");
         for (Index i = 0; i < num_params; ++i) {
           WriteValue(args[i].value, ", ");
         }
         WriteValue(")");
         PushTypes(func.decl.sig.result_types);
-        for (Index i = 1; i < num_results; ++i) {
-          WriteValue(".let{", StackVar(num_results - i - 1),
-                     "=it.first;it.second}");
+        if (num_results > 1) {
+          WriteValue("){");
+          for (Index i = 1; i < num_results; ++i) {
+            if (i != 1) {
+              WriteValue(",");
+            }
+            WriteValuef("v%d", i);
+          }
+          WriteValue("->");
+          for (Index i = 1; i < num_results; ++i) {
+            WriteValue(StackVar(num_results - i - 1));
+            WriteValuef("=v%d;", i);
+          }
+          WriteValue("}");
         }
         while (value_stack_.size() < type_stack_.size()) {
           PushVar();
@@ -2032,7 +2061,6 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Index num_params = decl.GetNumParams();
         Index num_results = decl.GetNumResults();
         assert(type_stack_.size() > num_params);
-        assert(num_results <= 1);
         StackValue tabkey = PopValue();
         DropTypes(1);
         std::vector<StackValue> args = PopValues(num_params);
@@ -2057,6 +2085,9 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Index func_type_index = module_->GetFuncTypeIndex(decl.type_var);
 
         DefineCallIndirect(func_type_index, decl);
+        if (num_results > 1) {
+          WriteValue("(");
+        }
         WriteValue("CALL_INDIRECT_");
         WriteValuef("%u", func_type_index);
         WriteValue("(", GetGlobalName(table->name));
@@ -2066,9 +2097,20 @@ void KotlinWriter::Write(const ExprList& exprs) {
         }
         WriteValue(tabkey.value, ")");
         PushTypes(decl.sig.result_types);
-        for (Index i = 1; i < num_results; ++i) {
-          WriteValue(".let{", StackVar(num_results - i - 1),
-                     "=it.first;it.second}");
+        if (num_results > 1) {
+          WriteValue("){");
+          for (Index i = 1; i < num_results; ++i) {
+            if (i != 1) {
+              WriteValue(",");
+            }
+            WriteValuef("v%d", i);
+          }
+          WriteValue("->");
+          for (Index i = 1; i < num_results; ++i) {
+            WriteValue(StackVar(num_results - i - 1));
+            WriteValuef("=v%d;", i);
+          }
+          WriteValue("}");
         }
         while (value_stack_.size() < type_stack_.size()) {
           PushVar();

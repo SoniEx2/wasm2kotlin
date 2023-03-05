@@ -38,6 +38,11 @@ fun <T> ASSERT_EXHAUSTION(f: () -> T, name: BMap) {
     }
 }
 
+fun FAIL(name: BMap) {
+    g_tests_run++
+        error(StringBuilder("UNIMPLEMENTED ").append(name.get("file")).append(":").append(name.get("line")).toString(), Exception())
+}
+
 fun <T> ASSERT_RETURN(f: () -> T, name: BMap) {
     g_tests_run++
     try {
@@ -374,7 +379,7 @@ class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
         } else if (expected.list.size == 0) {
             runAssertActionCommand(command)
         } else {
-            throw RuntimeException("Unexpected result with multiple valies " + expected)
+            FAIL(command)
         }
     }
 
