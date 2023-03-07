@@ -258,6 +258,7 @@ class KotlinWriter {
   StackValue PopValue();
   std::vector<StackValue> PopValues(size_t count);
   void DropValue();
+  void SpillResults(const std::vector<StackValue>& values);
   void SpillValues(size_t preserve,
                    DependsOn requirements,
                    SideEffects effects);
@@ -493,6 +494,20 @@ std::vector<StackValue> KotlinWriter::PopValues(size_t count) {
   std::move(value_stack_.end() - count, value_stack_.end(), values.begin());
   value_stack_.erase(value_stack_.end() - count, value_stack_.end());
   return values;
+}
+
+void KotlinWriter::SpillResults(const std::vector<StackValue>& values) {
+  // Moves results into their final location.
+  for (const StackValue& value : values) {
+    // we're gonna drop these below but this is easier than working with
+    // indices.
+    PushVar();
+    // these must be spilled because they're part of a label target.
+    // only write those which aren't already spilled
+    if (GetValue().value != value.value) {
+      Write(GetValue().value, " = ", value.value, Newline());
+    }
+  }
 }
 
 void KotlinWriter::SpillValues(size_t preserve_count,
@@ -1711,13 +1726,7 @@ void KotlinWriter::Write(const Func& func) {
   std::vector<StackValue> return_values;
   if (!unreachable_) {
     return_values = PopValues(func.GetNumResults());
-    for (const StackValue& value : return_values) {
-      // we're gonna drop these below but this is easier than working with
-      // indices.
-      PushVar();
-      // these must be spilled because they're part of a label target.
-      Write(GetValue().value, " = ", value.value, Newline());
-    }
+    SpillResults(return_values);
   }
   unreachable_ = false;
   while (value_stack_.size() > 0) {
@@ -1744,7 +1753,8 @@ void KotlinWriter::Write(const Func& func) {
       }
       Write(StackVar(num_results - i - 1));
     }
-    Write(");", Newline(), StackVar(num_results - 1), CloseBrace(), Newline());
+    Write(");", Newline(), StackVar(num_results - 1), Newline());
+    Write(CloseBrace(), Newline());
   }
 
   stream_ = kotlin_stream_;
@@ -1908,13 +1918,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         if (!unreachable_) {
           std::vector<StackValue> output_values =
               PopValues(block.decl.GetNumResults());
-          for (const StackValue& value : output_values) {
-            // we're gonna drop these below but this is easier than working with
-            // indices.
-            PushVar();
-            // these must be spilled because they're part of a label target.
-            Write(GetValue().value, " = ", value.value, Newline());
-          }
+          SpillResults(output_values);
         }
         unreachable_ = false;
         while (value_stack_.size() > mark) {
@@ -2156,12 +2160,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
           if (!unreachable_) {
             std::vector<StackValue> output_values =
                 PopValues(if_.true_.decl.GetNumResults());
-            for (const StackValue& value : output_values) {
-              // we're gonna drop these below but this is easier than working
-              // with indices.
-              PushVar();
-              Write(GetValue().value, " = ", value.value, Newline());
-            }
+            SpillResults(output_values);
           }
           unreachable_ = false;
           while (value_stack_.size() > mark) {
@@ -2178,12 +2177,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         if (!unreachable_) {
           std::vector<StackValue> output_values =
               PopValues(if_.true_.decl.GetNumResults());
-          for (const StackValue& value : output_values) {
-            // we're gonna drop these below but this is easier than working with
-            // indices.
-            PushVar();
-            Write(GetValue().value, " = ", value.value, Newline());
-          }
+          SpillResults(output_values);
         }
         unreachable_ = false;
         while (value_stack_.size() > mark) {
@@ -2252,11 +2246,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
           PushTypes(block.decl.sig.param_types);
-          // these must be spilled because they're part of a label target.
-          for (const StackValue& value : input_values) {
-            PushVar();
-            Write(GetValue().value, " = ", value.value, Newline());
-          }
+          SpillResults(input_values);
           Write(LabelDecl(label), "while (true) ", OpenBrace());
           Write(block.exprs);
           std::vector<StackValue> output_values;
