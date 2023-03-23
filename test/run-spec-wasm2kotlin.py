@@ -40,7 +40,6 @@ import sys
 
 import find_exe
 import utils
-from utils import Error
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WASM2C_DIR = os.path.join(find_exe.REPO_ROOT_DIR, 'wasm2kotlin')
