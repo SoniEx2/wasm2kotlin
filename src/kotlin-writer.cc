@@ -39,6 +39,7 @@
 #include <map>
 #include <set>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 #include "src/cast.h"
@@ -1959,10 +1960,29 @@ void KotlinWriter::Write(const ExprList& exprs) {
         DropTypes(1);
         SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
         Write("when (", sv.value, ") ", OpenBrace());
+        std::unordered_multimap<const Label*, Index> targets;
         Index i = 0;
         for (const Var& var : bt_expr->targets) {
-          Write(i++, " -> ", OpenBrace(), GotoLabel(var), CloseBrace(),
-                Newline());
+          const Label* label = FindLabel(var);
+          targets.insert(std::pair<const Label*, Index>(label, i++));
+        }
+        for (const Var& var : bt_expr->targets) {
+          const Label* label = FindLabel(var);
+          bool written = false;
+          auto range = targets.equal_range(label);
+          for (auto it = range.first; it != range.second; ++it) {
+            if (!written) {
+              Write(it->second);
+              written = true;
+            } else {
+              Write(", ", it->second);
+            }
+          }
+          targets.erase(label);
+
+          if (written) {
+            Write(" -> ", OpenBrace(), GotoLabel(var), CloseBrace(), Newline());
+          }
         }
         Write("else -> ", OpenBrace());
         Write(GotoLabel(bt_expr->default_target), CloseBrace(), Newline(),
