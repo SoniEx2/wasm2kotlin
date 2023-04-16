@@ -54,7 +54,6 @@
 
 #define UNIMPLEMENTED(x) printf("unimplemented: %s\n", (x)), abort()
 
-
 extern const char* s_source_includes;
 
 namespace wabt {
