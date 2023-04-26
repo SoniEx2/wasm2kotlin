@@ -900,7 +900,7 @@ void KotlinWriter::Write(const GotoLabel& goto_label) {
     // We've generated names for all labels, so we should only be using an
     // index when branching to the implicit function label, which can't be
     // named.
-    Write("break@", Var(kImplicitFuncLabel), ";");
+    Write("break@", Var(kImplicitFuncLabel, {}), ";");
   }
 }
 
@@ -2574,7 +2574,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         SpillValues();
         PushValues(std::move(values));
         assert(!label_stack_.empty());
-        Write(GotoLabel(Var(label_stack_.size() - 1)), Newline());
+        Write(GotoLabel(Var(label_stack_.size() - 1, {})), Newline());
         size_t mark = label_stack_.back().type_stack_size;
         while (value_stack_.size() > mark) {
           DropValue();
