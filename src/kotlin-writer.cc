@@ -143,7 +143,6 @@ struct TryCatchLabel {
   size_t try_catch_stack_size;
 };
 
-
 struct Newline {};
 struct OpenBrace {};
 struct CloseBrace {};
@@ -535,7 +534,7 @@ void KotlinWriter::SpillValues() {
   Index max = value_stack_.size();
   for (Index i = 0; i < max; ++i) {
     StackValue& value = value_stack_[i];
-    if (value.precedence == 0) { // simple var
+    if (value.precedence == 0) {  // simple var
       continue;
     }
     std::string thing;
@@ -1386,7 +1385,7 @@ void KotlinWriter::WriteImports() {
         const Tag& tag = cast<TagImport>(import)->tag;
         mangled = MangleName(import->field_name);
         WriteTag(&tag, DefineImportName(tag.name, import->module_name, mangled,
-                                    ExternalKind::Tag));
+                                        ExternalKind::Tag));
         type = "Tag";
         break;
       }
@@ -1811,8 +1810,8 @@ void KotlinWriter::Write(const Func& func) {
 
   Write(CloseBrace(), " catch(e: StackOverflowError) ", OpenBrace(),
         "throw " WASM_RT_PKG ".ExhaustionException(null, e)", Newline());
-  Write(CloseBrace(), " catch(d: Delegate) ", OpenBrace(),
-        "throw d.ex", Newline());
+  Write(CloseBrace(), " catch (d: Delegate) ", OpenBrace(), "throw d.ex",
+        Newline());
   Write(CloseBrace(), Newline());
 
   Write(CloseBrace());
@@ -1939,8 +1938,7 @@ void KotlinWriter::DropValue() {
 
 void KotlinWriter::Write(const Block& block) {
   const std::string label = DefineLocalScopeName(block.label);
-  std::vector<StackValue> input_values =
-      PopValues(block.decl.GetNumParams());
+  std::vector<StackValue> input_values = PopValues(block.decl.GetNumParams());
   DropTypes(block.decl.GetNumParams());
   SideEffects updating;
   DependsOn depends_on;
@@ -2005,7 +2003,7 @@ size_t KotlinWriter::BeginTry(const TryExpr& tryexpr) {
   Write("throw d.ex", Newline());
   Write(CloseBrace(), Newline());
   Write("throw d", Newline());
-  Write(CloseBrace()); // no newline
+  Write(CloseBrace());  // no newline
   assert(label_stack_.back().name == tryexpr.block.label);
   assert(label_stack_.back().label_type == LabelType::Try);
   label_stack_.back().label_type = LabelType::Catch;
@@ -2112,7 +2110,6 @@ void KotlinWriter::WriteTryDelegate(const TryExpr& tryexpr) {
 
   assert(local_sym_map_.count(tryexpr.block.label) == 1);
   const std::string& tlabel = local_sym_map_[tryexpr.block.label];
-
 
   if (tryexpr.delegate_target.is_index()) {
     /* must be the implicit function label */
@@ -2492,7 +2489,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
           PushTypes(block.decl.sig.param_types);
-          Write(""); // write indent if needed
+          Write("");  // write indent if needed
           PushFuncSection(label);
           Write(LabelDecl(label));
           PushFuncSection();
@@ -2680,7 +2677,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
           DropValue();
         }
         unreachable_ = true;
-      } return;
+        return;
+      }
 
       case ExprType::Rethrow: {
         assert(!label_stack_.empty());
@@ -2693,7 +2691,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
         assert(rethrow->var.is_name());
         const LocalName ex{rethrow->var.name()};
         Write("throw ex_", ex, ";", Newline());
-      } return;
+        return;
+      }
 
       case ExprType::Try: {
         const TryExpr& tryexpr = *cast<TryExpr>(&expr);
