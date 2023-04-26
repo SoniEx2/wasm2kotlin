@@ -132,7 +132,7 @@ There are many make targets available for other configurations as well. They
 are generated from every combination of a compiler, build type and
 configuration.
 
- - compilers: `gcc`, `clang`, `gcc-i686`, `emcc`
+ - compilers: `gcc`, `clang`, `gcc-i686`, `emscripten`
  - build types: `debug`, `release`
  - configurations: empty, `asan`, `msan`, `lsan`, `ubsan`, `fuzz`, `no-tests`
 
@@ -149,7 +149,7 @@ $ make gcc-debug-no-tests
 
 You'll need [CMake](https://cmake.org). You'll also need
 [Visual Studio](https://www.visualstudio.com/) (2015 or newer) or
-[MinGW](http://www.mingw.org/).
+[MinGW](https://www.mingw-w64.org/).
 
 _Note: Visual Studio 2017 and later come with CMake (and the Ninja build system)
 out of the box, and should be on your PATH if you open a Developer Command prompt.

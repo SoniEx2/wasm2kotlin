@@ -1022,7 +1022,7 @@ bool WastParser::ParseRefTypeOpt(Type* out_type) {
   return true;
 }
 
-Result WastParser::ParseQuotedText(std::string* text) {
+Result WastParser::ParseQuotedText(std::string* text, bool check_utf8) {
   WABT_TRACE(ParseQuotedText);
   if (!PeekMatch(TokenType::Text)) {
     return ErrorExpected({"a quoted string"}, "\"foo\"");
@@ -1030,7 +1030,7 @@ Result WastParser::ParseQuotedText(std::string* text) {
 
   Token token = Consume();
   RemoveEscapes(token.text(), std::back_inserter(*text));
-  if (!IsValidUtf8(text->data(), text->length())) {
+  if (check_utf8 && !IsValidUtf8(text->data(), text->length())) {
     Error(token.loc, "quoted string has an invalid utf-8 encoding");
   }
   return Result::Ok;
@@ -1945,7 +1945,7 @@ Result WastParser::ParseCodeMetadataAnnotation(ExprList* exprs) {
   std::string_view name = tk.text();
   name.remove_prefix(sizeof("metadata.code.") - 1);
   std::string data_text;
-  CHECK_RESULT(ParseQuotedText(&data_text));
+  CHECK_RESULT(ParseQuotedText(&data_text, false));
   std::vector<uint8_t> data(data_text.begin(), data_text.end());
   exprs->push_back(MakeUnique<CodeMetadataExpr>(name, std::move(data)));
   TokenType rpar = Peek();
@@ -1993,22 +1993,9 @@ Result WastParser::ParseMemoryInstrVar(Location loc,
 }
 
 template <typename T>
-Result WastParser::ParsePlainLoadStoreInstr(Location loc,
-                                            Token token,
-                                            std::unique_ptr<Expr>* out_expr) {
-  Opcode opcode = token.opcode();
-  Address offset;
-  Address align;
-  ParseOffsetOpt(&offset);
-  ParseAlignOpt(&align);
-  out_expr->reset(new T(opcode, align, offset, loc));
-  return Result::Ok;
-}
-
-template <typename T>
-Result WastParser::ParseMemoryLoadStoreInstr(Location loc,
-                                             Token token,
-                                             std::unique_ptr<Expr>* out_expr) {
+Result WastParser::ParseLoadStoreInstr(Location loc,
+                                       Token token,
+                                       std::unique_ptr<Expr>* out_expr) {
   Opcode opcode = token.opcode();
   Var memidx;
   Address offset;
@@ -2227,13 +2214,11 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
       break;
 
     case TokenType::Load:
-      CHECK_RESULT(
-          ParseMemoryLoadStoreInstr<LoadExpr>(loc, Consume(), out_expr));
+      CHECK_RESULT(ParseLoadStoreInstr<LoadExpr>(loc, Consume(), out_expr));
       break;
 
     case TokenType::Store:
-      CHECK_RESULT(
-          ParseMemoryLoadStoreInstr<StoreExpr>(loc, Consume(), out_expr));
+      CHECK_RESULT(ParseLoadStoreInstr<StoreExpr>(loc, Consume(), out_expr));
       break;
 
     case TokenType::Const: {
@@ -2393,8 +2378,7 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
     case TokenType::AtomicNotify: {
       Token token = Consume();
       ErrorUnlessOpcodeEnabled(token);
-      CHECK_RESULT(
-          ParsePlainLoadStoreInstr<AtomicNotifyExpr>(loc, token, out_expr));
+      CHECK_RESULT(ParseLoadStoreInstr<AtomicNotifyExpr>(loc, token, out_expr));
       break;
     }
 
@@ -2409,32 +2393,28 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
     case TokenType::AtomicWait: {
       Token token = Consume();
       ErrorUnlessOpcodeEnabled(token);
-      CHECK_RESULT(
-          ParsePlainLoadStoreInstr<AtomicWaitExpr>(loc, token, out_expr));
+      CHECK_RESULT(ParseLoadStoreInstr<AtomicWaitExpr>(loc, token, out_expr));
       break;
     }
 
     case TokenType::AtomicLoad: {
       Token token = Consume();
       ErrorUnlessOpcodeEnabled(token);
-      CHECK_RESULT(
-          ParsePlainLoadStoreInstr<AtomicLoadExpr>(loc, token, out_expr));
+      CHECK_RESULT(ParseLoadStoreInstr<AtomicLoadExpr>(loc, token, out_expr));
       break;
     }
 
     case TokenType::AtomicStore: {
       Token token = Consume();
       ErrorUnlessOpcodeEnabled(token);
-      CHECK_RESULT(
-          ParsePlainLoadStoreInstr<AtomicStoreExpr>(loc, token, out_expr));
+      CHECK_RESULT(ParseLoadStoreInstr<AtomicStoreExpr>(loc, token, out_expr));
       break;
     }
 
     case TokenType::AtomicRmw: {
       Token token = Consume();
       ErrorUnlessOpcodeEnabled(token);
-      CHECK_RESULT(
-          ParsePlainLoadStoreInstr<AtomicRmwExpr>(loc, token, out_expr));
+      CHECK_RESULT(ParseLoadStoreInstr<AtomicRmwExpr>(loc, token, out_expr));
       break;
     }
 
@@ -2442,7 +2422,7 @@ Result WastParser::ParsePlainInstr(std::unique_ptr<Expr>* out_expr) {
       Token token = Consume();
       ErrorUnlessOpcodeEnabled(token);
       CHECK_RESULT(
-          ParsePlainLoadStoreInstr<AtomicRmwCmpxchgExpr>(loc, token, out_expr));
+          ParseLoadStoreInstr<AtomicRmwCmpxchgExpr>(loc, token, out_expr));
       break;
     }
 
