@@ -74,7 +74,8 @@ examples:
 )";
 
 static const std::string supported_features[] = {
-    "multi-memory", "multi-value", "sign-extend", "saturating-float-to-int"};
+    "multi-memory", "multi-value", "sign-extend", "saturating-float-to-int",
+    "exceptions"};
 
 static bool IsFeatureSupported(const std::string& feature) {
   return std::find(std::begin(supported_features), std::end(supported_features),
@@ -123,7 +124,7 @@ static void ParseOptions(int argc, char** argv) {
 
   if (any_non_supported_feature) {
     fprintf(stderr,
-            "wasm2kotlin currently only supports a fixed set of features.\n");
+            "wasm2kotlin currently only supports a limited set of features.\n");
     exit(1);
   }
 }

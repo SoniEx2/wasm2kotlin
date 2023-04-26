@@ -54,7 +54,10 @@
 
 #define UNIMPLEMENTED(x) printf("unimplemented: %s\n", (x)), abort()
 
+#define WASM_RT_PKG "wasm_rt_impl"
+
 extern const char* s_source_includes;
+extern const char* s_source_inner;
 
 namespace wabt {
 
@@ -65,11 +68,13 @@ struct Label {
         const std::string& name,
         const TypeVector& sig,
         size_t type_stack_size,
+        size_t try_catch_stack_size,
         bool used = false)
       : label_type(label_type),
         name(name),
         sig(sig),
         type_stack_size(type_stack_size),
+        try_catch_stack_size(try_catch_stack_size),
         used(used) {}
 
   bool HasValue() const { return !sig.empty(); }
@@ -78,6 +83,7 @@ struct Label {
   const std::string& name;
   const TypeVector& sig;
   size_t type_stack_size;
+  size_t try_catch_stack_size;
   bool used = false;
 };
 
@@ -129,6 +135,14 @@ struct ResultType {
   explicit ResultType(const TypeVector& types) : types(types) {}
   const TypeVector& types;
 };
+
+struct TryCatchLabel {
+  TryCatchLabel(const std::string& name, size_t try_catch_stack_size)
+      : name(name), try_catch_stack_size(try_catch_stack_size) {}
+  std::string name;
+  size_t try_catch_stack_size;
+};
+
 
 struct Newline {};
 struct OpenBrace {};
@@ -257,17 +271,15 @@ class KotlinWriter {
   void PushVar();
   StackValue PopValue();
   std::vector<StackValue> PopValues(size_t count);
+  void PushValues(std::vector<StackValue> values);
   void DropValue();
-  void SpillResults(const std::vector<StackValue>& values);
-  void SpillValues(size_t preserve,
-                   DependsOn requirements,
-                   SideEffects effects);
+  void SpillValues();
 
   void PushLabel(LabelType,
                  const std::string& name,
                  const FuncSignature&,
                  bool used = false);
-  const Label* FindLabel(const Var& var);
+  const Label* FindLabel(const Var& var, bool mark_used = true);
   void PopLabel();
 
   static std::string AddressOf(const std::string&, const std::string&);
@@ -315,7 +327,6 @@ class KotlinWriter {
   void WriteValue(const LocalName&);
   void WriteValue(const GlobalName&);
   void WriteValue(const StackVar&);
-  void WriteValue(const ExternalPtr&);
   void WriteValue(Type);
 
   template <typename T, typename U, typename... Args>
@@ -349,7 +360,10 @@ class KotlinWriter {
   void WriteInitExpr(const ExprList&);
   void WriteSourceTop();
   void WriteSourceBottom();
+  void WriteTagTypes();
   void WriteFuncTypes();
+  void WriteTags();
+  void WriteTag(const Tag*, const std::string&);
   void WriteImport(const char*, const std::string&, const std::string&, bool);
   void WriteImports();
   void WriteFuncType(const FuncDeclaration&);
@@ -394,12 +408,22 @@ class KotlinWriter {
   void Write(const SimdShuffleOpExpr&);
   void Write(const LoadSplatExpr&);
   void Write(const LoadZeroExpr&);
+  void Write(const Block&);
+
+  size_t BeginTry(const TryExpr& tryexpr);
+  void WriteTryCatch(const TryExpr& tryexpr);
+  void WriteTryDelegate(const TryExpr& tryexpr);
+  void Write(const Catch& c);
+
+  void PushTryCatch(const std::string& name);
+  void PopTryCatch();
+
+  void PushFuncSection(const std::string_view include_condition = "");
 
   const WriteKotlinOptions& options_;
   const Module* module_ = nullptr;
   const Func* func_ = nullptr;
   Stream* stream_ = nullptr;
-  MemoryStream funkotlin_stream_;
   Stream* kotlin_stream_ = nullptr;
   std::string class_name_;
   std::string package_name_;
@@ -420,8 +444,12 @@ class KotlinWriter {
   SymbolSet module_import_syms_;
   TypeVector type_stack_;
   std::vector<Label> label_stack_;
+  std::vector<TryCatchLabel> try_catch_stack_;
   std::vector<StackValue> value_stack_;
   CallIndirectDeclMap call_indirect_decl_map_;
+
+  std::vector<std::pair<std::string, MemoryStream>> func_sections_;
+  SymbolSet func_includes_;
 };
 
 static const char kImplicitFuncLabel[] = "$Bfunc";
@@ -496,68 +524,35 @@ std::vector<StackValue> KotlinWriter::PopValues(size_t count) {
   return values;
 }
 
-void KotlinWriter::SpillResults(const std::vector<StackValue>& values) {
-  // Moves results into their final location.
-  for (const StackValue& value : values) {
-    // we're gonna drop these below but this is easier than working with
-    // indices.
-    PushVar();
-    // these must be spilled because they're part of a label target.
-    // only write those which aren't already spilled
-    if (GetValue().value != value.value) {
-      Write(GetValue().value, " = ", value.value, Newline());
-    }
-  }
+void KotlinWriter::PushValues(std::vector<StackValue> values) {
+  value_stack_.resize(value_stack_.size() + values.size());
+  std::move(values.begin(), values.end(), value_stack_.end() - values.size());
 }
 
-void KotlinWriter::SpillValues(size_t preserve_count,
-                               DependsOn requirements,
-                               SideEffects effects) {
-  // blocks will pass updates_locals=local_syms_, updates_globals=global_syms_,
-  // updates_memory=true, can_trap=true
-  //
-  // memory writes will pass updates_locals=empty, updates_globals=empty,
-  // updates_memory=true, can_trap=true
-  //
-  // global writes will pass updates_locals=empty, updates_globals=the_global,
-  // updates_memory=false, can_trap=false
-  //
-  // local writes will pass updates_locals=the_local, updates_globals=empty,
-  // updates_memory=false, can_trap=false
-  //
-  // preserve_count values will be preserved
+void KotlinWriter::SpillValues() {
+  // Writes out values to the function body.
   assert(value_stack_.size() <= type_stack_.size());
-  assert(preserve_count <= type_stack_.size());
-  Index max =
-      std::min(value_stack_.size(), type_stack_.size() - preserve_count);
-  // *ideally* we'd use SSA form, but that's not gonna happen.
-  std::vector<bool> tospill(max);
+  Index max = value_stack_.size();
   for (Index i = 0; i < max; ++i) {
     StackValue& value = value_stack_[i];
-    tospill[i] = !value.depends_on.empty() || !value.side_effects.empty();
-  }
-  for (Index i = 0; i < max; ++i) {
-    if (tospill[i]) {
-      StackValue& value = value_stack_[i];
-      if (value.precedence == 0) {
-        continue;
-      }
-      std::string thing;
-      Type type = type_stack_[i];
-      StackTypePair stp = {i, type};
-      auto iter = stack_var_sym_map_.find(stp);
-      if (iter == stack_var_sym_map_.end()) {
-        std::string name = MangleType(type) + std::to_string(i);
-        thing = DefineStackVarName(i, type, name);
-      } else {
-        thing = iter->second;
-      }
-      std::swap(value.value, thing);
-      value.depends_on.clear();
-      value.side_effects.clear();
-      value.precedence = 0;
-      Write(value.value, " = ", thing, ";", Newline());
+    if (value.precedence == 0) { // simple var
+      continue;
     }
+    std::string thing;
+    Type type = type_stack_[i];
+    StackTypePair stp = {i, type};
+    auto iter = stack_var_sym_map_.find(stp);
+    if (iter == stack_var_sym_map_.end()) {
+      std::string name = MangleType(type) + std::to_string(i);
+      thing = DefineStackVarName(i, type, name);
+    } else {
+      thing = iter->second;
+    }
+    std::swap(value.value, thing);
+    value.depends_on.clear();
+    value.side_effects.clear();
+    value.precedence = 0;
+    Write(value.value, " = ", thing, ";", Newline());
   }
 }
 
@@ -567,13 +562,15 @@ void KotlinWriter::PushLabel(LabelType label_type,
                              bool used) {
   if (label_type == LabelType::Loop)
     label_stack_.emplace_back(label_type, name, sig.param_types,
-                              type_stack_.size(), used);
+                              type_stack_.size(), try_catch_stack_.size(),
+                              used);
   else
     label_stack_.emplace_back(label_type, name, sig.result_types,
-                              type_stack_.size(), used);
+                              type_stack_.size(), try_catch_stack_.size(),
+                              used);
 }
 
-const Label* KotlinWriter::FindLabel(const Var& var) {
+const Label* KotlinWriter::FindLabel(const Var& var, bool mark_used) {
   Label* label = nullptr;
 
   if (var.is_index()) {
@@ -592,7 +589,13 @@ const Label* KotlinWriter::FindLabel(const Var& var) {
   }
 
   assert(label);
-  label->used = true;
+  if (mark_used) {
+    label->used = true;
+    if (var.is_name()) {
+      assert(local_sym_map_.count(var.name()) == 1);
+      func_includes_.insert(local_sym_map_[var.name()]);
+    }
+  }
   return label;
 }
 
@@ -853,10 +856,6 @@ void KotlinWriter::Write(const ExternalPtr& name) {
   Write(AddressOf(GetGlobalName(name.name), class_name_));
 }
 
-void KotlinWriter::WriteValue(const ExternalPtr& name) {
-  WriteValue(AddressOf(GetGlobalName(name.name), class_name_));
-}
-
 void KotlinWriter::Write(const Var& var) {
   assert(var.is_name());
   Write(LocalName(var.name()));
@@ -883,6 +882,8 @@ void KotlinWriter::Write(const GotoLabel& goto_label) {
       }
     }
   }
+
+  assert(try_catch_stack_.size() >= label->try_catch_stack_size);
 
   if (goto_label.var.is_name()) {
     switch (label->label_type) {
@@ -1232,8 +1233,9 @@ void KotlinWriter::WriteSourceTop() {
         "\"VARIABLE_WITH_REDUNDANT_INITIALIZER\", ",
         "\"ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE\")", Newline());
   Write("class ", class_name_,
-        " (moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String)",
+        " (moduleRegistry: " WASM_RT_PKG ".ModuleRegistry, name: String)",
         OpenBrace());
+  Write(s_source_inner);
 }
 
 void KotlinWriter::WriteImport(const char* type,
@@ -1262,14 +1264,14 @@ void KotlinWriter::WriteFuncTypes() {
   Writef("private val func_types: IntArray = IntArray(%" PRIzd ")",
          module_->types.size());
   Write(Newline(), Newline());
-  Write("init /* func_types */", OpenBrace(), Newline());
+  Write("init /* func_types */", OpenBrace());
   Index func_type_index = 0;
   for (TypeEntry* type : module_->types) {
     FuncType* func_type = cast<FuncType>(type);
     Index num_params = func_type->GetNumParams();
     Index num_results = func_type->GetNumResults();
     Write("func_types[", func_type_index,
-          "] = wasm_rt_impl.register_func_type(", num_params, ", ",
+          "] = " WASM_RT_PKG ".register_func_type(", num_params, ", ",
           num_results);
     for (Index i = 0; i < num_params; ++i) {
       Write(", ", TypeEnum(func_type->GetParamType(i)));
@@ -1285,6 +1287,37 @@ void KotlinWriter::WriteFuncTypes() {
   Write(CloseBrace(), Newline());
 }
 
+void KotlinWriter::WriteTags() {
+  if (module_->tags.size() == module_->num_tag_imports) {
+    return;
+  }
+
+  Write(Newline());
+
+  for (auto it = module_->tags.cbegin() + module_->num_tag_imports;
+       it != module_->tags.cend(); ++it) {
+    const Tag* tag = *it;
+
+    Write("private var ");
+    WriteTag(tag, DefineGlobalScopeName(tag->name, ExternalKind::Tag));
+    Write(" = " WASM_RT_PKG ".Tag()", Newline());
+  }
+}
+
+void KotlinWriter::WriteTag(const Tag* tag, const std::string& name) {
+  Write(name, ": " WASM_RT_PKG ".Tag<(");
+  const FuncDeclaration& tag_type = tag->decl;
+  Index num_params = tag_type.GetNumParams();
+  assert(tag_type.GetNumResults() == 0);
+  for (Index i = 0; i < num_params; ++i) {
+    if (i != 0) {
+      Write(",");
+    }
+    Write(tag_type.GetParamType(i));
+  }
+  Write(") -> Unit>");
+}
+
 void KotlinWriter::WriteImports() {
   if (module_->imports.empty())
     return;
@@ -1298,7 +1331,7 @@ void KotlinWriter::WriteImports() {
     Write("private ");
     std::string mangled;
     const char* type;
-    bool delegate = true;
+    bool delegate = false;
     switch (import->kind()) {
       case ExternalKind::Func: {
         Write("val ");
@@ -1309,7 +1342,6 @@ void KotlinWriter::WriteImports() {
         Write(name, ": ");
         WriteFuncType(func.decl);
         type = "Func";
-        delegate = false;
         break;
       }
 
@@ -1318,6 +1350,7 @@ void KotlinWriter::WriteImports() {
         if (global.mutable_) {
           Write("var ");
           type = "Global";
+          delegate = true;
         } else {
           Write("val ");
           type = "Constant";
@@ -1329,7 +1362,7 @@ void KotlinWriter::WriteImports() {
       }
 
       case ExternalKind::Memory: {
-        Write("var ");
+        Write("val ");
         const Memory& memory = cast<MemoryImport>(import)->memory;
         mangled = MangleName(import->field_name);
         WriteMemory(DefineImportName(memory.name, import->module_name, mangled,
@@ -1339,12 +1372,22 @@ void KotlinWriter::WriteImports() {
       }
 
       case ExternalKind::Table: {
-        Write("var ");
+        Write("val ");
         const Table& table = cast<TableImport>(import)->table;
         mangled = MangleName(import->field_name);
         WriteTable(DefineImportName(table.name, import->module_name, mangled,
                                     ExternalKind::Table));
         type = "Table";
+        break;
+      }
+
+      case ExternalKind::Tag: {
+        Write("val ");
+        const Tag& tag = cast<TagImport>(import)->tag;
+        mangled = MangleName(import->field_name);
+        WriteTag(&tag, DefineImportName(tag.name, import->module_name, mangled,
+                                    ExternalKind::Tag));
+        type = "Tag";
         break;
       }
 
@@ -1434,15 +1477,18 @@ void KotlinWriter::WriteMemories() {
     if (!is_import) {
       Write("private var ");
       WriteMemory(DefineGlobalScopeName(memory->name, ExternalKind::Memory));
-      Write(" = wasm_rt_impl.Memory(0, 0);");
-      Write(Newline());
+      uint32_t max =
+          memory->page_limits.has_max ? memory->page_limits.max : 65536;
+      Write(" = " WASM_RT_PKG ".Memory(", memory->page_limits.initial, ", ");
+      Writef("%d", static_cast<int32_t>(max));
+      Write(");", Newline());
     }
     ++memory_index;
   }
 }
 
 void KotlinWriter::WriteMemory(const std::string& name) {
-  Write(name, ": wasm_rt_impl.Memory");
+  Write(name, ": " WASM_RT_PKG ".Memory");
 }
 
 void KotlinWriter::WriteTables() {
@@ -1459,15 +1505,18 @@ void KotlinWriter::WriteTables() {
     if (!is_import) {
       Write("private var ");
       WriteTable(DefineGlobalScopeName(table->name, ExternalKind::Table));
-      Write(" = wasm_rt_impl.Table(0, 0);");
-      Write(Newline());
+      uint32_t max =
+          table->elem_limits.has_max ? table->elem_limits.max : UINT32_MAX;
+      Write(" = " WASM_RT_PKG ".Table(", table->elem_limits.initial, ", ");
+      Writef("%d", static_cast<int32_t>(max));
+      Write(");", Newline());
     }
     ++table_index;
   }
 }
 
 void KotlinWriter::WriteTable(const std::string& name) {
-  Write(name, ": wasm_rt_impl.Table");
+  Write(name, ": " WASM_RT_PKG ".Table");
 }
 
 void KotlinWriter::WriteDataInitializers() {
@@ -1504,18 +1553,6 @@ void KotlinWriter::WriteDataInitializers() {
   }
 
   Write(Newline(), "init /* memory */ ", OpenBrace());
-  if (module_->memories.size() > module_->num_memory_imports) {
-    Index memory_idx = module_->num_memory_imports;
-    for (Index i = memory_idx; i < module_->memories.size(); i++) {
-      memory = module_->memories[i];
-      uint32_t max =
-          memory->page_limits.has_max ? memory->page_limits.max : 65536;
-      Write("wasm_rt_impl.allocate_memory(", ExternalPtr(memory->name), ", ",
-            memory->page_limits.initial, ", ");
-      Writef("%d", static_cast<int32_t>(max));
-      Write(");", Newline());
-    }
-  }
   data_segment_index = 0;
   for (const DataSegment* data_segment : module_->data_segments) {
     Write(GetGlobalName(memory->name), ".put(");
@@ -1559,14 +1596,6 @@ void KotlinWriter::WriteElemInitializers() {
   if (emit_offset) {
     Write("var offset: Int", Newline());
   }
-  if (table && module_->num_table_imports == 0) {
-    uint32_t max =
-        table->elem_limits.has_max ? table->elem_limits.max : UINT32_MAX;
-    Write("wasm_rt_impl.allocate_table(", ExternalPtr(table->name), ", ",
-          table->elem_limits.initial, ", ");
-    Writef("%d", static_cast<int32_t>(max));
-    Write(");", Newline());
-  }
   Index elem_segment_index = 0;
   for (const ElemSegment* elem_segment : module_->elem_segments) {
     if (elem_segment->kind == SegmentKind::Passive) {
@@ -1590,7 +1619,7 @@ void KotlinWriter::WriteElemInitializers() {
       bool is_import = import_syms_.count(func->name) != 0;
 
       Write(GetGlobalName(table->name), "[offset + ", i,
-            "] = wasm_rt_impl.Elem(func_types[", func_type_index, "], ");
+            "] = " WASM_RT_PKG ".Elem(func_types[", func_type_index, "], ");
       if (!is_import) {
         Write(ExternalPtr(func->name));
       } else {
@@ -1619,7 +1648,7 @@ void KotlinWriter::WriteExports() {
     std::string mangled_name;
     std::string internal_name;
     const char* type;
-    bool external_ptr = true;
+    bool external_ptr = false;
 
     switch (export_->kind) {
       case ExternalKind::Func: {
@@ -1636,6 +1665,7 @@ void KotlinWriter::WriteExports() {
         mangled_name = ExportName(MangleName(export_->name));
         internal_name = global->name;
         if (global->mutable_) {
+          external_ptr = true;
           type = "Global";
         } else {
           type = "Constant";
@@ -1656,6 +1686,14 @@ void KotlinWriter::WriteExports() {
         mangled_name = ExportName(MangleName(export_->name));
         internal_name = table->name;
         type = "Table";
+        break;
+      }
+
+      case ExternalKind::Tag: {
+        const Tag* tag = module_->GetTag(export_->var);
+        mangled_name = ExportName(MangleName(export_->name));
+        internal_name = tag->name;
+        type = "Tag";
         break;
       }
 
@@ -1695,12 +1733,19 @@ void KotlinWriter::WriteFuncs() {
   }
 }
 
+void KotlinWriter::PushFuncSection(const std::string_view include_condition) {
+  func_sections_.emplace_back(include_condition, MemoryStream{});
+  stream_ = &func_sections_.back().second;
+}
+
 void KotlinWriter::Write(const Func& func) {
   func_ = &func;
   // Copy symbols from global symbol table so we don't shadow them.
   local_syms_ = global_syms_;
   local_sym_map_.clear();
   stack_var_sym_map_.clear();
+  func_sections_.clear();
+  func_includes_.clear();
 
   std::vector<std::string> index_to_name;
   std::vector<std::string> to_shadow;
@@ -1713,8 +1758,7 @@ void KotlinWriter::Write(const Func& func) {
   WriteLocals(index_to_name, to_shadow);
   Write("try ", OpenBrace());
 
-  stream_ = &funkotlin_stream_;
-  stream_->ClearOffset();
+  PushFuncSection();
 
   std::string label = DefineLocalScopeName(kImplicitFuncLabel);
   value_stack_.clear();
@@ -1725,13 +1769,10 @@ void KotlinWriter::Write(const Func& func) {
   Write(func.exprs);
   std::vector<StackValue> return_values;
   if (!unreachable_) {
-    return_values = PopValues(func.GetNumResults());
-    SpillResults(return_values);
+    SpillValues();
+    PopValues(func.GetNumResults());
   }
   unreachable_ = false;
-  while (value_stack_.size() > 0) {
-    DropValue();
-  }
   PopLabel();
   ResetTypeStack(0);
   PushTypes(func.decl.sig.result_types);
@@ -1761,16 +1802,21 @@ void KotlinWriter::Write(const Func& func) {
 
   WriteStackVarDeclarations();
 
-  std::unique_ptr<OutputBuffer> buf = funkotlin_stream_.ReleaseOutputBuffer();
-  stream_->WriteData(buf->data.data(), buf->data.size());
+  for (auto& [condition, stream] : func_sections_) {
+    std::unique_ptr<OutputBuffer> buf = stream.ReleaseOutputBuffer();
+    if (condition.empty() || func_includes_.count(condition)) {
+      stream_->WriteData(buf->data.data(), buf->data.size());
+    }
+  }
 
   Write(CloseBrace(), " catch(e: StackOverflowError) ", OpenBrace(),
-        "throw wasm_rt_impl.ExhaustionException(null, e)", Newline(),
-        CloseBrace(), Newline());
+        "throw " WASM_RT_PKG ".ExhaustionException(null, e)", Newline());
+  Write(CloseBrace(), " catch(d: Delegate) ", OpenBrace(),
+        "throw d.ex", Newline());
+  Write(CloseBrace(), Newline());
 
   Write(CloseBrace());
 
-  funkotlin_stream_.Clear();
   func_ = nullptr;
 }
 
@@ -1826,7 +1872,7 @@ void KotlinWriter::WriteCallIndirectDefinitions() {
   for (const auto& pair : call_indirect_decl_map_) {
     Index index = pair.first;
     const FuncDeclaration& decl = pair.second;
-    Writef("private fun CALL_INDIRECT_%u(w2k_table: wasm_rt_impl.Table, ",
+    Writef("private fun CALL_INDIRECT_%u(w2k_table: " WASM_RT_PKG ".Table, ",
            index);
     if (decl.GetNumParams() != 0) {
       Indent(4);
@@ -1845,7 +1891,7 @@ void KotlinWriter::WriteCallIndirectDefinitions() {
       Write("w2k_index: Int");
     }
     Write("): ", ResultType(decl.sig.result_types), OpenBrace());
-    Write("return wasm_rt_impl.CALL_INDIRECT<");
+    Write("return " WASM_RT_PKG ".CALL_INDIRECT<");
     WriteFuncType(decl);
     Write(">(w2k_table, func_types[");
     Write(index, "], w2k_index)(");
@@ -1886,8 +1932,220 @@ void KotlinWriter::WriteStackVarDeclarations() {
 void KotlinWriter::DropValue() {
   StackValue sv = PopValue();
   if (!sv.side_effects.empty()) {
-    SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+    SpillValues();
     Write(sv.value, ";", Newline());
+  }
+}
+
+void KotlinWriter::Write(const Block& block) {
+  const std::string label = DefineLocalScopeName(block.label);
+  std::vector<StackValue> input_values =
+      PopValues(block.decl.GetNumParams());
+  DropTypes(block.decl.GetNumParams());
+  SideEffects updating;
+  DependsOn depends_on;
+  SpillValues();
+  size_t mark = MarkTypeStack();
+  PushLabel(LabelType::Block, block.label, block.decl.sig);
+  PushTypes(block.decl.sig.param_types);
+  PushValues(std::move(input_values));
+  PushFuncSection(label);
+  Write(LabelDecl(label), "do ", OpenBrace());
+  PushFuncSection();
+  Write(block.exprs);
+  if (!unreachable_) {
+    SpillValues();
+    PopValues(block.decl.GetNumResults());
+  }
+  unreachable_ = false;
+  ResetTypeStack(mark);
+  PopLabel();
+  PushTypes(block.decl.sig.result_types);
+  while (value_stack_.size() < type_stack_.size()) {
+    PushVar();
+  }
+  PushFuncSection(label);
+  Write(CloseBrace(), " while (false);", Newline());
+  PushFuncSection();
+}
+
+size_t KotlinWriter::BeginTry(const TryExpr& tryexpr) {
+  const std::string tlabel = DefineLocalScopeName(tryexpr.block.label);
+  std::vector<StackValue> input_values =
+      PopValues(tryexpr.block.decl.GetNumParams());
+  DropTypes(tryexpr.block.decl.GetNumParams());
+  SideEffects updating;
+  DependsOn depends_on;
+  SpillValues();
+  size_t mark = MarkTypeStack();
+  PushTryCatch(tlabel);
+  PushLabel(LabelType::Try, tryexpr.block.label, tryexpr.block.decl.sig);
+  PushTypes(tryexpr.block.decl.sig.param_types);
+  PushValues(std::move(input_values));
+  PushFuncSection(tlabel);
+  Write(LabelDecl(tlabel), "do ", OpenBrace());
+  PushFuncSection();
+  Write("try ", OpenBrace());
+  Write(tryexpr.block.exprs);
+  if (!unreachable_) {
+    SpillValues();
+    PopValues(tryexpr.block.decl.GetNumResults());
+  }
+  unreachable_ = false;
+  ResetTypeStack(mark);
+  // never catch WasmTrapException
+  Write(CloseBrace(), " catch (e: " WASM_RT_PKG ".WasmTrapException) ",
+        OpenBrace());
+  Write("throw e", Newline());
+  // handle delegates
+  // TODO maybe only emit these if there are delegates?
+  // maybe the complexity wouldn't be worth it tho
+  Write(CloseBrace(), " catch (d: Delegate) ", OpenBrace());
+  Write("if (--d.level == 0) ", OpenBrace());
+  Write("throw d.ex", Newline());
+  Write(CloseBrace(), Newline());
+  Write("throw d", Newline());
+  Write(CloseBrace()); // no newline
+  assert(label_stack_.back().name == tryexpr.block.label);
+  assert(label_stack_.back().label_type == LabelType::Try);
+  label_stack_.back().label_type = LabelType::Catch;
+  return mark;
+}
+
+void KotlinWriter::WriteTryCatch(const TryExpr& tryexpr) {
+  const size_t mark = BeginTry(tryexpr);
+
+  /* exception has been thrown -- do we catch it? */
+
+  assert(local_sym_map_.count(tryexpr.block.label) == 1);
+  const std::string& tlabel = local_sym_map_[tryexpr.block.label];
+
+  PopTryCatch();
+
+  Write(" catch (ex_", tlabel, ": Exception) ", OpenBrace());
+  Write("val ex = ex_", tlabel, ";", Newline());
+
+  assert(!tryexpr.catches.empty());
+  bool has_catch_all{};
+  for (auto it = tryexpr.catches.cbegin(); it != tryexpr.catches.cend(); ++it) {
+    if (it != tryexpr.catches.cbegin()) {
+      Write(" else ");
+    }
+    Write(*it);
+    if (!unreachable_) {
+      SpillValues();
+      PopValues(tryexpr.block.decl.GetNumResults());
+    }
+    unreachable_ = false;
+    Write(CloseBrace());
+    ResetTypeStack(mark);
+    if (it->IsCatchAll()) {
+      has_catch_all = true;
+      break;
+    }
+  }
+  if (!has_catch_all) {
+    /* if not caught, rethrow */
+    Write(" else ", OpenBrace());
+    Write("throw ex_", tlabel, Newline());
+    Write(CloseBrace(), Newline());
+  } else {
+    Write(Newline());
+  }
+  Write(CloseBrace(), Newline()); /* end of catch blocks */
+
+  PushFuncSection(tlabel);
+  Write(CloseBrace(), " while (false);", Newline());
+  PushFuncSection();
+
+  PopLabel();
+  PushTypes(tryexpr.block.decl.sig.result_types);
+  while (value_stack_.size() < type_stack_.size()) {
+    PushVar();
+  }
+}
+
+void KotlinWriter::Write(const Catch& c) {
+  if (c.IsCatchAll()) {
+    Write("if (true) ", OpenBrace());
+    Write(c.exprs);
+    return;
+  }
+
+  const Tag* tag = module_->GetTag(c.var);
+  Write("if (", GlobalName(tag->name), ".check (ex) {");
+  const FuncDeclaration& tag_type = tag->decl;
+  const Index num_params = tag_type.GetNumParams();
+  PushTypes(tag_type.sig.param_types);
+  for (Index i = 0; i < num_params; ++i) {
+    if (i != 0) {
+      Write(",");
+    }
+    Writef("v%d", i);
+  }
+  Write("->");
+  for (Index i = 0; i < num_params; ++i) {
+    Write(StackVar(num_params - i - 1));
+    Writef("=v%d;", i);
+  }
+  Write("}) ", OpenBrace());
+  while (value_stack_.size() < type_stack_.size()) {
+    PushVar();
+  }
+
+  Write(c.exprs);
+}
+
+void KotlinWriter::PushTryCatch(const std::string& name) {
+  try_catch_stack_.emplace_back(name, try_catch_stack_.size());
+}
+
+void KotlinWriter::PopTryCatch() {
+  assert(!try_catch_stack_.empty());
+  try_catch_stack_.pop_back();
+}
+
+void KotlinWriter::WriteTryDelegate(const TryExpr& tryexpr) {
+  const size_t mark = BeginTry(tryexpr);
+
+  /* exception has been thrown -- where do we delegate it? */
+
+  assert(local_sym_map_.count(tryexpr.block.label) == 1);
+  const std::string& tlabel = local_sym_map_[tryexpr.block.label];
+
+
+  if (tryexpr.delegate_target.is_index()) {
+    /* must be the implicit function label */
+    Write(" catch (ex: Exception) ", OpenBrace());
+    Write("throw Delegate(", try_catch_stack_.size(), ", ex)", Newline());
+    Write(CloseBrace(), Newline());
+  } else {
+    const Label* label = FindLabel(tryexpr.delegate_target, false);
+
+    assert(try_catch_stack_.size() >= label->try_catch_stack_size);
+    size_t depth = try_catch_stack_.size() - label->try_catch_stack_size;
+
+    if (depth != 0 && --depth != 0) {
+      Write(" catch (ex: Exception) ", OpenBrace());
+      Write("throw Delegate(");
+      Write(depth);
+      Write(", ex)", Newline());
+      Write(CloseBrace());
+    }
+    Write(Newline());
+  }
+
+  PopTryCatch();
+
+  PushFuncSection(tlabel);
+  Write(CloseBrace(), " while (false);", Newline());
+  PushFuncSection();
+
+  ResetTypeStack(mark);
+  PopLabel();
+  PushTypes(tryexpr.block.decl.sig.result_types);
+  while (value_stack_.size() < type_stack_.size()) {
+    PushVar();
   }
 }
 
@@ -1898,56 +2156,31 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Write(*cast<BinaryExpr>(&expr));
         break;
 
-      case ExprType::Block: {
-        const Block& block = cast<BlockExpr>(&expr)->block;
-        std::string label = DefineLocalScopeName(block.label);
-        std::vector<StackValue> input_values =
-            PopValues(block.decl.GetNumParams());
-        DropTypes(block.decl.GetNumParams());
-        SideEffects updating;
-        DependsOn depends_on;
-        SpillValues(0, std::move(depends_on), std::move(updating));
-        size_t mark = MarkTypeStack();
-        PushLabel(LabelType::Block, block.label, block.decl.sig);
-        PushTypes(block.decl.sig.param_types);
-        for (StackValue& value : input_values) {
-          PushValue(std::move(value));
-        }
-        Write(LabelDecl(label), "do ", OpenBrace());
-        Write(block.exprs);
-        if (!unreachable_) {
-          std::vector<StackValue> output_values =
-              PopValues(block.decl.GetNumResults());
-          SpillResults(output_values);
-        }
-        unreachable_ = false;
+      case ExprType::Block:
+        Write(cast<BlockExpr>(&expr)->block);
+        break;
+
+      case ExprType::Br: {
+        unreachable_ = true;
+        const Var& var = cast<BrExpr>(&expr)->var;
+        const Label* label = FindLabel(var);
+        std::vector<StackValue> values = PopValues(label->sig.size());
+        SpillValues();
+        PushValues(std::move(values));
+        Write(GotoLabel(var), Newline());
+        assert(!label_stack_.empty());
+        size_t mark = label_stack_.back().type_stack_size;
         while (value_stack_.size() > mark) {
           DropValue();
         }
-        ResetTypeStack(mark);
-        PopLabel();
-        PushTypes(block.decl.sig.result_types);
-        while (value_stack_.size() < type_stack_.size()) {
-          PushVar();
-        }
-        Write(CloseBrace(), " while (false);", Newline());
-        break;
-      }
-
-      case ExprType::Br: {
-        const Var& var = cast<BrExpr>(&expr)->var;
-        const Label* label = FindLabel(var);
-        Write(GotoLabel(var), Newline());
-        PopValues(label->sig.size());
         // Stop processing this ExprList, since the following are unreachable.
-        unreachable_ = true;
         return;
       }
 
       case ExprType::BrIf: {
         StackValue sv = PopValue();
         DropTypes(1);
-        SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+        SpillValues();
         Write("if ((", sv.value, ").inz())", OpenBrace());
         Write(GotoLabel(cast<BrIfExpr>(&expr)->var), CloseBrace(), Newline());
         break;
@@ -1957,20 +2190,21 @@ void KotlinWriter::Write(const ExprList& exprs) {
         const auto* bt_expr = cast<BrTableExpr>(&expr);
         StackValue sv = PopValue();
         DropTypes(1);
-        SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
-        Write("when (", sv.value, ") ", OpenBrace());
+        SpillValues();
+        unreachable_ = true;
         std::unordered_multimap<const Label*, Index> targets;
         Index i = 0;
         for (const Var& var : bt_expr->targets) {
           const Label* label = FindLabel(var);
           targets.insert(std::pair<const Label*, Index>(label, i++));
         }
+        Write("when (", sv.value, ") ", OpenBrace());
         for (const Var& var : bt_expr->targets) {
           const Label* label = FindLabel(var);
-          bool written = false;
           auto range = targets.equal_range(label);
+          bool written = false;
           for (auto it = range.first; it != range.second; ++it) {
-            if (!written) {
+            if (it == range.first) {
               Write(it->second);
               written = true;
             } else {
@@ -1986,8 +2220,12 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Write("else -> ", OpenBrace());
         Write(GotoLabel(bt_expr->default_target), CloseBrace(), Newline(),
               CloseBrace(), Newline());
+        assert(!label_stack_.empty());
+        size_t mark = label_stack_.back().type_stack_size;
+        while (value_stack_.size() > mark) {
+          DropValue();
+        }
         // Stop processing this ExprList, since the following are unreachable.
-        unreachable_ = true;
         return;
       }
 
@@ -1999,6 +2237,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         assert(type_stack_.size() >= num_params);
         std::vector<StackValue> args = PopValues(num_params);
         DropTypes(num_params);
+        SpillValues();
         StackValue sv;
         sv.precedence = 2;
         for (const StackValue& arg : args) {
@@ -2036,6 +2275,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         }
         while (value_stack_.size() < type_stack_.size()) {
           PushVar();
+          // FIXME these should have depends_on set to the call StackValue
         }
         if (num_results == 0) {
           DropValue();
@@ -2052,6 +2292,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         DropTypes(1);
         std::vector<StackValue> args = PopValues(num_params);
         DropTypes(num_params);
+        SpillValues();
         StackValue sv;
         sv.precedence = 2;
         sv.depends_on |= tabkey.depends_on;
@@ -2101,6 +2342,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         }
         while (value_stack_.size() < type_stack_.size()) {
           PushVar();
+          // FIXME these should have depends_on set to the call StackValue
         }
         if (num_results == 0) {
           DropValue();
@@ -2150,9 +2392,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
         const Var& var = cast<GlobalSetExpr>(&expr)->var;
         assert(var.is_name());
         StackValue sv = PopValue();
-        sv.side_effects.updates_globals.insert(var.name());
         DropTypes(1);
-        SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+        SpillValues();
         Write(GlobalVar(var), " = ", sv.value, ";", Newline());
         break;
       }
@@ -2162,48 +2403,37 @@ void KotlinWriter::Write(const ExprList& exprs) {
         std::string label = DefineLocalScopeName(if_.true_.label);
         StackValue cond = PopValue();
         DropTypes(1);
+        SpillValues();
         std::vector<StackValue> args = PopValues(if_.true_.decl.GetNumParams());
         DropTypes(args.size());
-        SpillValues(0, std::move(cond.depends_on),
-                    std::move(cond.side_effects));
         size_t mark = MarkTypeStack();
         PushLabel(LabelType::If, if_.true_.label, if_.true_.decl.sig);
         PushTypes(if_.true_.decl.sig.param_types);
-        for (const StackValue& arg : args) {
-          PushValue(arg);
-        }
+        PushValues(args);
         Write(LabelDecl(label), "do ", OpenBrace());
         Write("if ((", cond.value, ").inz()) ", OpenBrace());
         Write(if_.true_.exprs);
         if (!if_.false_.empty()) {
           if (!unreachable_) {
-            std::vector<StackValue> output_values =
-                PopValues(if_.true_.decl.GetNumResults());
-            SpillResults(output_values);
+            SpillValues();
+            PopValues(if_.true_.decl.GetNumResults());
           }
           unreachable_ = false;
-          while (value_stack_.size() > mark) {
-            DropValue();
-          }
           Write(CloseBrace());
+          assert(value_stack_.size() == mark);
           ResetTypeStack(mark);
           PushTypes(if_.true_.decl.sig.param_types);
-          for (StackValue& arg : args) {
-            PushValue(std::move(arg));
-          }
+          PushValues(std::move(args));
           Write(" else ", OpenBrace(), if_.false_);
         }
         if (!unreachable_) {
-          std::vector<StackValue> output_values =
-              PopValues(if_.true_.decl.GetNumResults());
-          SpillResults(output_values);
+          SpillValues();
+          PopValues(if_.true_.decl.GetNumResults());
         }
         unreachable_ = false;
-        while (value_stack_.size() > mark) {
-          DropValue();
-        }
         Write(CloseBrace());
         Write(CloseBrace(), " while (false);");
+        assert(value_stack_.size() == mark);
         ResetTypeStack(mark);
         Write(Newline());
         PopLabel();
@@ -2235,7 +2465,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         StackValue sv = PopValue();
         sv.side_effects.updates_locals.insert(var.name());
         DropTypes(1);
-        SpillValues(0, std::move(sv.depends_on), std::move(sv.side_effects));
+        SpillValues();
         Write(var, " = ", sv.value, ";", Newline());
         break;
       }
@@ -2256,26 +2486,23 @@ void KotlinWriter::Write(const ExprList& exprs) {
         const Block& block = cast<LoopExpr>(&expr)->block;
         if (!block.exprs.empty()) {
           std::string label = DefineLocalScopeName(block.label);
-          std::vector<StackValue> input_values =
-              PopValues(block.decl.GetNumParams());
+          SpillValues();
+          PopValues(block.decl.GetNumParams());
           DropTypes(block.decl.GetNumParams());
-          SideEffects updating;
-          DependsOn depends_on;
-          SpillValues(0, std::move(depends_on), std::move(updating));
           size_t mark = MarkTypeStack();
           PushLabel(LabelType::Loop, block.label, block.decl.sig);
           PushTypes(block.decl.sig.param_types);
-          SpillResults(input_values);
-          Write(LabelDecl(label), "while (true) ", OpenBrace());
+          Write(""); // write indent if needed
+          PushFuncSection(label);
+          Write(LabelDecl(label));
+          PushFuncSection();
+          Write("while (true) ", OpenBrace());
           Write(block.exprs);
           std::vector<StackValue> output_values;
           if (!unreachable_) {
             output_values = PopValues(block.decl.GetNumResults());
           }
           unreachable_ = false;
-          while (value_stack_.size() > mark) {
-            DropValue();
-          }
           ResetTypeStack(mark);
           PopLabel();
           PushTypes(block.decl.sig.result_types);
@@ -2285,7 +2512,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
           while (value_stack_.size() < type_stack_.size()) {
             PushVar();
           }
-          Write("break@", label, ";", Newline());
+          Write("break;", Newline());
           Write(CloseBrace(), Newline());
         }
         break;
@@ -2322,8 +2549,7 @@ void KotlinWriter::Write(const ExprList& exprs) {
         std::swap(oldvalue, sv.value);
         PushType(Type::I32);
         PushValue(sv);
-        WriteValue("wasm_rt_impl.grow_memory(", ExternalPtr(memory->name), ", ",
-                   oldvalue, ")");
+        WriteValue(GetGlobalName(memory->name), ".resize(", oldvalue, ")");
         break;
       }
 
@@ -2343,13 +2569,22 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::Nop:
         break;
 
-      case ExprType::Return:
+      case ExprType::Return: {
         // Goto the function label instead; this way we can do shared function
         // cleanup code in one place.
-        Write(GotoLabel(Var(label_stack_.size() - 1)), Newline());
-        // Stop processing this ExprList, since the following are unreachable.
         unreachable_ = true;
+        std::vector<StackValue> values = PopValues(func_->GetNumResults());
+        SpillValues();
+        PushValues(std::move(values));
+        assert(!label_stack_.empty());
+        Write(GotoLabel(Var(label_stack_.size() - 1)), Newline());
+        size_t mark = label_stack_.back().type_stack_size;
+        while (value_stack_.size() > mark) {
+          DropValue();
+        }
+        // Stop processing this ExprList, since the following are unreachable.
         return;
+      }
 
       case ExprType::Select: {
         Type type = StackType(1);
@@ -2413,11 +2648,67 @@ void KotlinWriter::Write(const ExprList& exprs) {
         Write(*cast<LoadZeroExpr>(&expr));
         break;
 
-      case ExprType::Unreachable:
+      case ExprType::Unreachable: {
+        assert(!label_stack_.empty());
+        size_t mark = label_stack_.back().type_stack_size;
+        while (value_stack_.size() > mark) {
+          DropValue();
+        }
         unreachable_ = true;
-        Write("throw wasm_rt_impl.UnreachableException(\"unreachable\");",
+        Write("throw " WASM_RT_PKG ".UnreachableException(\"unreachable\");",
               Newline());
         return;
+      }
+
+      case ExprType::Throw: {
+        const Var& var = cast<ThrowExpr>(&expr)->var;
+        const Tag* tag = module_->GetTag(var);
+        Index num_params = tag->decl.GetNumParams();
+        SpillValues();
+        Write("throw ", GlobalName(tag->name), ".newException() ", OpenBrace());
+        Write("it(");
+        for (Index i = 0; i < num_params; ++i) {
+          if (i != 0) {
+            Write(", ");
+          }
+          Write(StackVar(num_params - i - 1));
+        }
+        Write(");", Newline(), CloseBrace(), Newline());
+        assert(!label_stack_.empty());
+        size_t mark = label_stack_.back().type_stack_size;
+        while (value_stack_.size() > mark) {
+          DropValue();
+        }
+        unreachable_ = true;
+      } return;
+
+      case ExprType::Rethrow: {
+        assert(!label_stack_.empty());
+        size_t mark = label_stack_.back().type_stack_size;
+        while (value_stack_.size() > mark) {
+          DropValue();
+        }
+        unreachable_ = true;
+        const RethrowExpr* rethrow = cast<RethrowExpr>(&expr);
+        assert(rethrow->var.is_name());
+        const LocalName ex{rethrow->var.name()};
+        Write("throw ex_", ex, ";", Newline());
+      } return;
+
+      case ExprType::Try: {
+        const TryExpr& tryexpr = *cast<TryExpr>(&expr);
+        switch (tryexpr.kind) {
+          case TryKind::Plain:
+            Write(tryexpr.block);
+            break;
+          case TryKind::Catch:
+            WriteTryCatch(tryexpr);
+            break;
+          case TryKind::Delegate:
+            WriteTryDelegate(tryexpr);
+            break;
+        }
+      } break;
 
       case ExprType::AtomicLoad:
       case ExprType::AtomicRmw:
@@ -2426,11 +2717,8 @@ void KotlinWriter::Write(const ExprList& exprs) {
       case ExprType::AtomicWait:
       case ExprType::AtomicFence:
       case ExprType::AtomicNotify:
-      case ExprType::Rethrow:
       case ExprType::ReturnCall:
       case ExprType::ReturnCallIndirect:
-      case ExprType::Throw:
-      case ExprType::Try:
       case ExprType::CallRef:
         UNIMPLEMENTED("...");
         break;
@@ -2554,16 +2842,16 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
       break;
 
     case Opcode::I32DivS:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I32_DIV_S", true);
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".I32_DIV_S", true);
       break;
 
     case Opcode::I64DivS:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I64_DIV_S", true);
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".I64_DIV_S", true);
       break;
 
     case Opcode::I32DivU:
     case Opcode::I64DivU:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.DIV_U", true);
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".DIV_U", true);
       break;
 
     case Opcode::F32Div:
@@ -2572,16 +2860,16 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
       break;
 
     case Opcode::I32RemS:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I32_REM_S", true);
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".I32_REM_S", true);
       break;
 
     case Opcode::I64RemS:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I64_REM_S", true);
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".I64_REM_S", true);
       break;
 
     case Opcode::I32RemU:
     case Opcode::I64RemU:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.REM_U", true);
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".REM_U", true);
       break;
 
     case Opcode::I32And:
@@ -2627,29 +2915,29 @@ void KotlinWriter::Write(const BinaryExpr& expr) {
       break;
 
     case Opcode::I32Rotl:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I32_ROTL");
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".I32_ROTL");
       break;
 
     case Opcode::I64Rotl:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I64_ROTL");
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".I64_ROTL");
       break;
 
     case Opcode::I32Rotr:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I32_ROTR");
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".I32_ROTR");
       break;
 
     case Opcode::I64Rotr:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.I64_ROTR");
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".I64_ROTR");
       break;
 
     case Opcode::F32Min:
     case Opcode::F64Min:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.MIN");
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".MIN");
       break;
 
     case Opcode::F32Max:
     case Opcode::F64Max:
-      WritePrefixBinaryExpr(expr.opcode, "wasm_rt_impl.MAX");
+      WritePrefixBinaryExpr(expr.opcode, WASM_RT_PKG ".MAX");
       break;
 
     case Opcode::F32Copysign:
@@ -2753,42 +3041,42 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
 
     case Opcode::I32TruncF32S:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I32_TRUNC_S_F32", true);
+                           WASM_RT_PKG ".I32_TRUNC_S_F32", true);
       break;
 
     case Opcode::I64TruncF32S:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I64_TRUNC_S_F32", true);
+                           WASM_RT_PKG ".I64_TRUNC_S_F32", true);
       break;
 
     case Opcode::I32TruncF64S:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I32_TRUNC_S_F64", true);
+                           WASM_RT_PKG ".I32_TRUNC_S_F64", true);
       break;
 
     case Opcode::I64TruncF64S:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I64_TRUNC_S_F64", true);
+                           WASM_RT_PKG ".I64_TRUNC_S_F64", true);
       break;
 
     case Opcode::I32TruncF32U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I32_TRUNC_U_F32", true);
+                           WASM_RT_PKG ".I32_TRUNC_U_F32", true);
       break;
 
     case Opcode::I64TruncF32U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I64_TRUNC_U_F32", true);
+                           WASM_RT_PKG ".I64_TRUNC_U_F32", true);
       break;
 
     case Opcode::I32TruncF64U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I32_TRUNC_U_F64", true);
+                           WASM_RT_PKG ".I32_TRUNC_U_F64", true);
       break;
 
     case Opcode::I64TruncF64U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I64_TRUNC_U_F64", true);
+                           WASM_RT_PKG ".I64_TRUNC_U_F64", true);
       break;
 
     case Opcode::I32TruncSatF32S:
@@ -2803,22 +3091,22 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
 
     case Opcode::I32TruncSatF32U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I32_TRUNC_SAT_U_F32");
+                           WASM_RT_PKG ".I32_TRUNC_SAT_U_F32");
       break;
 
     case Opcode::I64TruncSatF32U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I64_TRUNC_SAT_U_F32");
+                           WASM_RT_PKG ".I64_TRUNC_SAT_U_F32");
       break;
 
     case Opcode::I32TruncSatF64U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I32_TRUNC_SAT_U_F64");
+                           WASM_RT_PKG ".I32_TRUNC_SAT_U_F64");
       break;
 
     case Opcode::I64TruncSatF64U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.I64_TRUNC_SAT_U_F64");
+                           WASM_RT_PKG ".I64_TRUNC_SAT_U_F64");
       break;
 
     case Opcode::F32ConvertI32S:
@@ -2828,7 +3116,7 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
 
     case Opcode::F32ConvertI32U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.UIntToFloat");
+                           WASM_RT_PKG ".UIntToFloat");
       break;
 
     case Opcode::F32DemoteF64:
@@ -2837,7 +3125,7 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
 
     case Opcode::F32ConvertI64U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.ULongToFloat");
+                           WASM_RT_PKG ".ULongToFloat");
       break;
 
     case Opcode::F64ConvertI32S:
@@ -2847,7 +3135,7 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
 
     case Opcode::F64ConvertI32U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.UIntToDouble");
+                           WASM_RT_PKG ".UIntToDouble");
       break;
 
     case Opcode::F64PromoteF32:
@@ -2856,7 +3144,7 @@ void KotlinWriter::Write(const ConvertExpr& expr) {
 
     case Opcode::F64ConvertI64U:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.ULongToDouble");
+                           WASM_RT_PKG ".ULongToDouble");
       break;
 
     case Opcode::F32ReinterpretI32:
@@ -2987,11 +3275,8 @@ void KotlinWriter::Write(const StoreExpr& expr) {
 
   StackValue sv_right = PopValue();
   StackValue sv_left = PopValue();
-  sv_left.depends_on |= sv_right.depends_on;
-  sv_left.side_effects |= sv_right.side_effects;
   DropTypes(2);
-  SpillValues(0, std::move(sv_left.depends_on),
-              std::move(sv_left.side_effects));
+  SpillValues();
   Write(GlobalName(memory->name), ".", func, "(", sv_left.value);
   if (expr.offset != 0)
     Writef(", %d", static_cast<int32_t>(expr.offset));
@@ -3036,7 +3321,7 @@ void KotlinWriter::Write(const UnaryExpr& expr) {
 
     case Opcode::F32Abs:
     case Opcode::F64Abs:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.abs");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), WASM_RT_PKG ".abs");
       break;
 
     case Opcode::F32Sqrt:
@@ -3046,18 +3331,18 @@ void KotlinWriter::Write(const UnaryExpr& expr) {
 
     case Opcode::F32Ceil:
     case Opcode::F64Ceil:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.ceil");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), WASM_RT_PKG ".ceil");
       break;
 
     case Opcode::F32Floor:
     case Opcode::F64Floor:
-      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), "wasm_rt_impl.floor");
+      WriteSimpleUnaryExpr(expr.opcode.GetResultType(), WASM_RT_PKG ".floor");
       break;
 
     case Opcode::F32Trunc:
     case Opcode::F64Trunc:
       WriteSimpleUnaryExpr(expr.opcode.GetResultType(),
-                           "wasm_rt_impl.truncate");
+                           WASM_RT_PKG ".truncate");
       break;
 
     case Opcode::F32Nearest:
@@ -3189,14 +3474,15 @@ void KotlinWriter::WriteKotlinSource() {
   WriteSourceTop();
   WriteFuncTypes();
   WriteImports();
+  WriteTags();
   AllocateFuncs();
   WriteGlobals();
   WriteMemories();
   WriteTables();
   WriteExports();
   WriteFuncs();
-  WriteDataInitializers();
   WriteElemInitializers();
+  WriteDataInitializers();
   WriteInit();
   WriteCallIndirectDefinitions();
   WriteSourceBottom();

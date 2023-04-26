@@ -1,4 +1,4 @@
-// Copyright 2020-2021 Soni L.
+// Copyright 2020-2023 Soni L.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,25 +36,29 @@ import kotlin.Function
 
 open class ModuleRegistry {
     private var funcs: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
-    private var tables: HashMap<Pair<String, String>, KMutableProperty0<Table>> = HashMap<Pair<String, String>, KMutableProperty0<Table>>();
-    private var globals: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
+    private var tables: HashMap<Pair<String, String>, Table> = HashMap<Pair<String, String>, Table>();
+    private var globals: HashMap<Pair<String, String>, KMutableProperty0<*>> = HashMap<Pair<String, String>, KMutableProperty0<*>>();
     private var constants: HashMap<Pair<String, String>, Any> = HashMap<Pair<String, String>, Any>();
-    private var memories: HashMap<Pair<String, String>, KMutableProperty0<Memory>> = HashMap<Pair<String, String>, KMutableProperty0<Memory>>();
+    private var memories: HashMap<Pair<String, String>, Memory> = HashMap<Pair<String, String>, Memory>();
+    private var tags: HashMap<Pair<String, String>, Tag<*>> = HashMap<Pair<String, String>, Tag<*>>();
 
     open fun <T> exportFunc(modname: String, fieldname: String, value: Function<T>) {
         funcs.put(Pair(modname, fieldname), value)
     }
-    open fun exportTable(modname: String, fieldname: String, value: KMutableProperty0<Table>) {
+    open fun exportTable(modname: String, fieldname: String, value: Table) {
         tables.put(Pair(modname, fieldname), value)
     }
     open fun <T> exportGlobal(modname: String, fieldname: String, value: KMutableProperty0<T>) {
         globals.put(Pair(modname, fieldname), value)
     }
-    open fun <T> exportConstant(modname: String, fieldname: String, value: KProperty0<T>) {
-        constants.put(Pair(modname, fieldname), value)
+    open fun <T> exportConstant(modname: String, fieldname: String, value: T) {
+        constants.put(Pair(modname, fieldname), value as Any)
     }
-    open fun exportMemory(modname: String, fieldname: String, value: KMutableProperty0<Memory>) {
+    open fun exportMemory(modname: String, fieldname: String, value: Memory) {
         memories.put(Pair(modname, fieldname), value)
+    }
+    open fun <T: Function<Unit>> exportTag(modname: String, fieldname: String, value: Tag<T>) {
+        tags.put(Pair(modname, fieldname), value)
     }
 
     // TODO add exceptions
@@ -62,19 +66,24 @@ open class ModuleRegistry {
     open fun <T: Function<U>, U> importFunc(modname: String, fieldname: String): T {
         return funcs.get(Pair(modname, fieldname)) as T
     }
-    open fun importTable(modname: String, fieldname: String): KMutableProperty0<Table> {
-        return tables.get(Pair(modname, fieldname)) as KMutableProperty0<Table>
+    open fun importTable(modname: String, fieldname: String): Table {
+        return tables.get(Pair(modname, fieldname))!!
     }
     @Suppress("UNCHECKED_CAST")
     open fun <T> importGlobal(modname: String, fieldname: String): KMutableProperty0<T> {
         return globals.get(Pair(modname, fieldname)) as KMutableProperty0<T>
     }
     @Suppress("UNCHECKED_CAST")
-    open fun <T> importConstant(modname: String, fieldname: String): KProperty0<T> {
-        return constants.get(Pair(modname, fieldname)) as KProperty0<T>
+    open fun <T> importConstant(modname: String, fieldname: String): T {
+        return constants.get(Pair(modname, fieldname)) as T
     }
-    open fun importMemory(modname: String, fieldname: String): KMutableProperty0<Memory> {
-        return memories.get(Pair(modname, fieldname)) as KMutableProperty0<Memory>
+    open fun importMemory(modname: String, fieldname: String): Memory {
+        return memories.get(Pair(modname, fieldname))!!
+    }
+    // TODO check type on import instead of on use
+    @Suppress("UNCHECKED_CAST")
+    open fun <T: Function<Unit>> importTag(modname: String, fieldname: String): Tag<T> {
+        return tags.get(Pair(modname, fieldname)) as Tag<T>
     }
 }
 
@@ -234,43 +243,67 @@ class Table(elements: Int, max_elements: Int) {
     }
 }
 
-data class Elem(val type: Int, val func: Function<Any>) {
+data class Elem(val type: Int, val func: Function<*>) {
 }
 
-open class WasmException(message: String? = null, cause: Throwable? = null) : RuntimeException(message, cause) {
+/**
+ * Thrown when a wasm exception or trap occurs.
+ */
+open class WasmException(message: String? = null, cause: Throwable? = null, debugInfo: Boolean = true) : RuntimeException(message, cause, debugInfo, debugInfo) {
 }
 
-open class ExhaustionException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+/**
+ * Thrown when a tagged wasm exception occurs.
+ */
+open class TaggedException(val tag: Tag<*>, val unwrap: Function1<*, Unit>) : WasmException(null, null, false) {
 }
 
-open class RangeException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+/**
+ * Thrown when a wasm trap occurs.
+ */
+open class WasmTrapException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
 }
 
-open class UnreachableException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+/**
+ * Thrown when wasm runs out of resources.
+ */
+open class ExhaustionException(message: String? = null, cause: Throwable? = null) : WasmTrapException(message, cause) {
 }
 
-open class CallIndirectException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+/**
+ * Thrown when wasm tries to index outside of a buffer.
+ */
+open class RangeException(message: String? = null, cause: Throwable? = null) : WasmTrapException(message, cause) {
 }
 
-open class DivByZeroException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+/**
+ * Thrown by the unreachable instruction.
+ */
+open class UnreachableException(message: String? = null, cause: Throwable? = null) : WasmTrapException(message, cause) {
 }
 
-open class IntOverflowException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+/**
+ * Thrown when the type of a call indirect doesn't match the type of the function.
+ */
+open class CallIndirectException(message: String? = null, cause: Throwable? = null) : WasmTrapException(message, cause) {
 }
 
-open class InvalidConversionException(message: String? = null, cause: Throwable? = null) : WasmException(message, cause) {
+/**
+ * Thrown when dividing by zero.
+ */
+open class DivByZeroException(message: String? = null, cause: Throwable? = null) : WasmTrapException(message, cause) {
 }
 
-fun allocate_table(table: KMutableProperty0<Table>, elements: Int, max_elements: Int) {
-    table.set(Table(elements, max_elements))
+/**
+ * Thrown when a float to integer conversion does not fit in an integer.
+ */
+open class IntOverflowException(message: String? = null, cause: Throwable? = null) : WasmTrapException(message, cause) {
 }
 
-fun allocate_memory(memory: KMutableProperty0<Memory>, initial_pages: Int, max_pages: Int) {
-    memory.set(Memory(initial_pages, max_pages))
-}
-
-fun grow_memory(memory: KMutableProperty0<Memory>, add_pages: Int): Int {
-    return memory.get().resize(add_pages)
+/**
+ * Thrown when trying to convert `NaN` to an integer.
+ */
+open class InvalidConversionException(message: String? = null, cause: Throwable? = null) : WasmTrapException(message, cause) {
 }
 
 private var func_types_by_nresults: HashMap<Pair<Int, List<Any>>, Int> = HashMap<Pair<Int, List<Any>>, Int>()
@@ -281,6 +314,24 @@ fun register_func_type(num_params: Int, num_results: Int, vararg types: Any): In
         val maybe_id: Int = func_types_by_nresults.size
         val id: Int = func_types_by_nresults.getOrPut(Pair(num_results, types.toList())) { maybe_id }
         return id
+    }
+}
+
+class Tag<T: Function<Unit>>() {
+    fun check(ex: Exception, func: T): Boolean {
+        if (ex !is TaggedException) {
+            return false
+        }
+        if (ex.tag !== this) {
+            return false
+        }
+        @Suppress("UNCHECKED_CAST")
+        (ex.unwrap as (T) -> Unit)(func)
+        return true
+    }
+
+    fun newException(unwrap: (T) -> Unit): TaggedException {
+        return TaggedException(this, unwrap)
     }
 }
 
@@ -301,6 +352,7 @@ inline fun Int.inz(): Boolean = this != 0
 inline fun Long.inz(): Boolean = this != 0L
 
 // NOTE(Soni): to preserve order of evaluation
+// FIXME maybe inlining this one is actually worse? TODO compare
 @Suppress("NOTHING_TO_INLINE")
 inline fun <T> select(third: T, second: T, first: Int): T = if (first != 0) third else second
 

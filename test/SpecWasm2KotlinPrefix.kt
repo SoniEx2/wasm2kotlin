@@ -21,8 +21,22 @@ fun <T> ASSERT_TRAP(f: () -> T, name: BMap) {
     try {
         f()
         error(StringBuilder("expected ").append(name.get("file")).append(":").append(name.get("line")).append(" to trap.").toString(), Exception())
-    } catch (e: wasm_rt_impl.WasmException) {
+    } catch (e: wasm_rt_impl.WasmTrapException) {
         g_tests_passed++
+    } catch (e: wasm_rt_impl.WasmException) {
+        error(StringBuilder("expected ").append(name.get("file")).append(":").append(name.get("line")).append(" to trap.").toString(), e)
+    }
+}
+
+fun <T> ASSERT_EXCEPTION(f: () -> T, name: BMap) {
+    g_tests_run++
+    try {
+        f()
+        error(StringBuilder("expected ").append(name.get("file")).append(":").append(name.get("line")).append(" to throw.").toString(), Exception())
+    } catch (e: wasm_rt_impl.TaggedException) {
+        g_tests_passed++
+    } catch (e: wasm_rt_impl.WasmException) {
+        error(StringBuilder("expected ").append(name.get("file")).append(":").append(name.get("line")).append(" to throw.").toString(), e)
     }
 }
 
@@ -170,8 +184,8 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
     print(")\n");
   }
   
-  var spectest_table: wasm_rt_impl.Table = wasm_rt_impl.Table(0, 0)
-  var spectest_memory: wasm_rt_impl.Memory = wasm_rt_impl.Memory(0, 0)
+  var spectest_table: wasm_rt_impl.Table = wasm_rt_impl.Table(10, 20)
+  var spectest_memory: wasm_rt_impl.Memory = wasm_rt_impl.Memory(1, 2)
   var spectest_global_i32: Int = 666
   var spectest_global_i64: Long = 666
   var spectest_global_f32: Float = 666f
@@ -185,27 +199,22 @@ class Z_spectest(moduleRegistry: wasm_rt_impl.ModuleRegistry, name: String) {
       moduleRegistry.exportFunc(name, "Z_print_f64", this@Z_spectest::spectest_print_f64);
       moduleRegistry.exportFunc(name, "Z_print_f64_f64", this@Z_spectest::spectest_print_f64_f64);
 
-      moduleRegistry.exportTable(name, "Z_table", this@Z_spectest::spectest_table);
-      moduleRegistry.exportMemory(name, "Z_memory", this@Z_spectest::spectest_memory);
+      moduleRegistry.exportTable(name, "Z_table", spectest_table);
+      moduleRegistry.exportMemory(name, "Z_memory", spectest_memory);
 
-      moduleRegistry.exportConstant(name, "Z_global_i32", this@Z_spectest::spectest_global_i32);
-      moduleRegistry.exportConstant(name, "Z_global_i64", this@Z_spectest::spectest_global_i64);
-      moduleRegistry.exportConstant(name, "Z_global_f32", this@Z_spectest::spectest_global_f32);
-      moduleRegistry.exportConstant(name, "Z_global_f64", this@Z_spectest::spectest_global_f64);
+      moduleRegistry.exportConstant(name, "Z_global_i32", spectest_global_i32);
+      moduleRegistry.exportConstant(name, "Z_global_i64", spectest_global_i64);
+      moduleRegistry.exportConstant(name, "Z_global_f32", spectest_global_f32);
+      moduleRegistry.exportConstant(name, "Z_global_f64", spectest_global_f64);
   }
 
-  init {
-    wasm_rt_impl.allocate_memory(this@Z_spectest::spectest_memory, 1, 2)
-    wasm_rt_impl.allocate_table(this@Z_spectest::spectest_table, 10, 20)
-  }
-  
 }
 
 fun <T> getGlobal(moduleRegistry: wasm_rt_impl.ModuleRegistry, modname: String, fieldname: String): T {
     try {
         return moduleRegistry.importGlobal<T>(modname, fieldname).get()
     } catch (e: NullPointerException) {
-        return moduleRegistry.importConstant<T>(modname, fieldname).get()
+        return moduleRegistry.importConstant<T>(modname, fieldname)
     }
 }
 
@@ -343,7 +352,8 @@ class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
             "assert_return" -> runAssertReturnCommand(command)
             "assert_trap" -> runAssertActionCommand(command)
             "assert_exhaustion" -> runAssertActionCommand(command)
-            else -> {}
+            "assert_exception" -> runAssertActionCommand(command)
+            else -> { FAIL(command) }
         }
     }
 
@@ -433,6 +443,9 @@ class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
                 action(command)
             }, command)
             "assert_trap" -> ASSERT_TRAP({
+                action(command)
+            }, command)
+            "assert_exception" -> ASSERT_EXCEPTION({
                 action(command)
             }, command)
         }

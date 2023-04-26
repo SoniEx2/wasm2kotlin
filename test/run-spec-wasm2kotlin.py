@@ -190,6 +190,7 @@ class CWriter(object):
             'action': self._WriteActionCommand,
             'assert_return': self._WriteAssertReturnCommand,
             'assert_trap': self._WriteAssertActionCommand,
+            'assert_exception': self._WriteAssertActionCommand,
             'assert_exhaustion': self._WriteAssertActionCommand,
         }
 
@@ -279,6 +280,7 @@ def main(args):
                         help='print the commands that are run.',
                         action='store_true')
     parser.add_argument('file', help='wast file.')
+    parser.add_argument('--enable-exceptions', action='store_true')
     parser.add_argument('--enable-multi-memory', action='store_true')
     parser.add_argument('--disable-bulk-memory', action='store_true')
     parser.add_argument('--disable-reference-types', action='store_true')
@@ -292,6 +294,7 @@ def main(args):
         wast2json.verbose = options.print_cmd
         wast2json.AppendOptionalArgs({
             '-v': options.verbose,
+            '--enable-exceptions': options.enable_exceptions,
             '--enable-multi-memory': options.enable_multi_memory,
             '--disable-bulk-memory': options.disable_bulk_memory,
             '--disable-reference-types': options.disable_reference_types})
@@ -305,6 +308,7 @@ def main(args):
             error_cmdline=options.error_cmdline)
         wasm2kotlin.verbose = options.print_cmd
         wasm2kotlin.AppendOptionalArgs({
+            '--enable-exceptions': options.enable_exceptions,
             '--enable-multi-memory': options.enable_multi_memory})
 
         kotlinc = utils.Executable(options.kotlinc, *options.ktflags,

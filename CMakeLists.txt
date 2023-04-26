@@ -497,14 +497,17 @@ if (BUILD_TOOLS)
 
   # wasm2kotlin
   add_custom_command(
-    OUTPUT wasm2kotlin_source_includes.cc
+    OUTPUT wasm2kotlin_source_includes.cc wasm2kotlin_source_inner.cc
 
     COMMAND ${CMAKE_COMMAND} -D out="wasm2kotlin_source_includes.cc" -D in="${WABT_SOURCE_DIR}/src/template/wasm2kotlin.includes.kt" -D symbol="s_source_includes" -P ${TEMPLATE_CMAKE}
+    COMMAND ${CMAKE_COMMAND} -D out="wasm2kotlin_source_inner.cc" -D in="${WABT_SOURCE_DIR}/src/template/wasm2kotlin.inner.kt" -D symbol="s_source_inner" -P ${TEMPLATE_CMAKE}
 
-    DEPENDS ${WABT_SOURCE_DIR}/src/template/wasm2c.includes.c
+    DEPENDS ${WABT_SOURCE_DIR}/src/template/wasm2kotlin.includes.kt
+    DEPENDS ${WABT_SOURCE_DIR}/src/template/wasm2kotlin.inner.kt
     )
 
-  add_library(kotlinwriter-template wasm2kotlin_source_includes.cc)
+  add_library(kotlinwriter-template wasm2kotlin_source_includes.cc wasm2kotlin_source_inner.cc)
+
   wabt_executable(
     NAME wasm2kotlin
     SOURCES src/tools/wasm2kotlin.cc src/kotlin-writer.cc

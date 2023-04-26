@@ -1,0 +1,19 @@
+;;; TOOL: run-spec-wasm2kotlin
+(module
+  (global $a (mut i32) (i32.const 0))
+
+  (func (export "get-a") (result i32) (global.get $a))
+
+  (func $set-and-return-a (result i32) (global.set $a (i32.const 1)) (global.get $a))
+
+  (func (export "call-unreachable") (result i32)
+    (call $set-and-return-a)
+    (unreachable)
+  )
+)
+
+(assert_trap (invoke "call-unreachable") "unreachable")
+(assert_return (invoke "get-a") (i32.const 1))
+(;; STDOUT ;;;
+2/2 tests passed.
+;;; STDOUT ;;)
