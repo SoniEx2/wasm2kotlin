@@ -505,13 +505,8 @@ TEST_F(InterpTest, Rot13) {
 
     EXPECT_LT(ptr + size, memory->ByteSize());
 
-#if WABT_BIG_ENDIAN
-    std::copy(string_data.rbegin(), string_data.rbegin() + size,
-              memory->UnsafeData() + memory->ByteSize() - ptr - size);
-#else
     std::copy(string_data.begin(), string_data.begin() + size,
               memory->UnsafeData() + ptr);
-#endif
 
     results[0].Set(size);
     return Result::Ok;
@@ -532,14 +527,8 @@ TEST_F(InterpTest, Rot13) {
     EXPECT_LT(ptr + size, memory->ByteSize());
 
     string_data.resize(size);
-#if WABT_BIG_ENDIAN
-    std::copy(memory->UnsafeData() + memory->ByteSize() - ptr - size,
-              memory->UnsafeData() + memory->ByteSize() - ptr,
-              string_data.rbegin());
-#else
     std::copy(memory->UnsafeData() + ptr, memory->UnsafeData() + ptr + size,
               string_data.begin());
-#endif
 
     return Result::Ok;
   };
