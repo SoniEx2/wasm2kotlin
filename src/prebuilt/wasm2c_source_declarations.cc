@@ -123,80 +123,7 @@ R"w2c_template(#define FORCE_READ_FLOAT(var)
 R"w2c_template(#endif
 )w2c_template"
 R"w2c_template(
-#if WABT_BIG_ENDIAN
-)w2c_template"
-R"w2c_template(static inline void load_data(void* dest, const void* src, size_t n) {
-)w2c_template"
-R"w2c_template(  if (!n) {
-)w2c_template"
-R"w2c_template(    return;
-)w2c_template"
-R"w2c_template(  }
-)w2c_template"
-R"w2c_template(  size_t i = 0;
-)w2c_template"
-R"w2c_template(  u8* dest_chars = dest;
-)w2c_template"
-R"w2c_template(  wasm_rt_memcpy(dest, src, n);
-)w2c_template"
-R"w2c_template(  for (i = 0; i < (n >> 1); i++) {
-)w2c_template"
-R"w2c_template(    u8 cursor = dest_chars[i];
-)w2c_template"
-R"w2c_template(    dest_chars[i] = dest_chars[n - i - 1];
-)w2c_template"
-R"w2c_template(    dest_chars[n - i - 1] = cursor;
-)w2c_template"
-R"w2c_template(  }
-)w2c_template"
-R"w2c_template(}
-)w2c_template"
-R"w2c_template(#define LOAD_DATA(m, o, i, s)                   \
-)w2c_template"
-R"w2c_template(  do {                                          \
-)w2c_template"
-R"w2c_template(    RANGE_CHECK((&m), m.size - o - s, s);       \
-)w2c_template"
-R"w2c_template(    load_data(&(m.data[m.size - o - s]), i, s); \
-)w2c_template"
-R"w2c_template(  } while (0)
-)w2c_template"
-R"w2c_template(#define DEFINE_LOAD(name, t1, t2, t3, force_read)                      \
-)w2c_template"
-R"w2c_template(  static inline t3 name(wasm_rt_memory_t* mem, u64 addr) {             \
-)w2c_template"
-R"w2c_template(    MEMCHECK(mem, addr, t1);                                           \
-)w2c_template"
-R"w2c_template(    t1 result;                                                         \
-)w2c_template"
-R"w2c_template(    wasm_rt_memcpy(&result, &mem->data[mem->size - addr - sizeof(t1)], \
-)w2c_template"
-R"w2c_template(                   sizeof(t1));                                        \
-)w2c_template"
-R"w2c_template(    force_read(result);                                                \
-)w2c_template"
-R"w2c_template(    return (t3)(t2)result;                                             \
-)w2c_template"
-R"w2c_template(  }
-)w2c_template"
-R"w2c_template(
-#define DEFINE_STORE(name, t1, t2)                                      \
-)w2c_template"
-R"w2c_template(  static inline void name(wasm_rt_memory_t* mem, u64 addr, t2 value) {  \
-)w2c_template"
-R"w2c_template(    MEMCHECK(mem, addr, t1);                                            \
-)w2c_template"
-R"w2c_template(    t1 wrapped = (t1)value;                                             \
-)w2c_template"
-R"w2c_template(    wasm_rt_memcpy(&mem->data[mem->size - addr - sizeof(t1)], &wrapped, \
-)w2c_template"
-R"w2c_template(                   sizeof(t1));                                         \
-)w2c_template"
-R"w2c_template(  }
-)w2c_template"
-R"w2c_template(#else
-)w2c_template"
-R"w2c_template(static inline void load_data(void* dest, const void* src, size_t n) {
+static inline void load_data(void* dest, const void* src, size_t n) {
 )w2c_template"
 R"w2c_template(  if (!n) {
 )w2c_template"
@@ -218,7 +145,7 @@ R"w2c_template(    load_data(&(m.data[o]), i, s); \
 )w2c_template"
 R"w2c_template(  } while (0)
 )w2c_template"
-R"w2c_template(#define DEFINE_LOAD(name, t1, t2, t3, force_read)          \
+R"w2c_template(#define DEFINE_LOAD(name, t1, t2, t3, t4, force_read)      \
 )w2c_template"
 R"w2c_template(  static inline t3 name(wasm_rt_memory_t* mem, u64 addr) { \
 )w2c_template"
@@ -226,7 +153,17 @@ R"w2c_template(    MEMCHECK(mem, addr, t1);                               \
 )w2c_template"
 R"w2c_template(    t1 result;                                             \
 )w2c_template"
-R"w2c_template(    wasm_rt_memcpy(&result, &mem->data[addr], sizeof(t1)); \
+R"w2c_template(    t4 temporary = 0;                                      \
+)w2c_template"
+R"w2c_template(    for (int i = sizeof(t1) - 1; i >= 0; --i) {            \
+)w2c_template"
+R"w2c_template(      temporary = (sizeof(t1) > 1) ? (temporary << 8) : 0; \
+)w2c_template"
+R"w2c_template(      temporary |= (t4)(mem->data[addr+i]);              \
+)w2c_template"
+R"w2c_template(    }                                                      \
+)w2c_template"
+R"w2c_template(    wasm_rt_memcpy(&result, &temporary, sizeof(t1));       \
 )w2c_template"
 R"w2c_template(    force_read(result);                                    \
 )w2c_template"
@@ -235,7 +172,7 @@ R"w2c_template(    return (t3)(t2)result;                                 \
 R"w2c_template(  }
 )w2c_template"
 R"w2c_template(
-#define DEFINE_STORE(name, t1, t2)                                     \
+#define DEFINE_STORE(name, t1, t2, t3)                                 \
 )w2c_template"
 R"w2c_template(  static inline void name(wasm_rt_memory_t* mem, u64 addr, t2 value) { \
 )w2c_template"
@@ -243,58 +180,70 @@ R"w2c_template(    MEMCHECK(mem, addr, t1);                                     
 )w2c_template"
 R"w2c_template(    t1 wrapped = (t1)value;                                            \
 )w2c_template"
-R"w2c_template(    wasm_rt_memcpy(&mem->data[addr], &wrapped, sizeof(t1));            \
+R"w2c_template(    t3 temporary;                                                      \
+)w2c_template"
+R"w2c_template(    uint8_t buf[sizeof(t1)];                                           \
+)w2c_template"
+R"w2c_template(    wasm_rt_memcpy(&temporary, &wrapped, sizeof(t1));                  \
+)w2c_template"
+R"w2c_template(    for (int i = 0; i < sizeof(t1); ++i) {                             \
+)w2c_template"
+R"w2c_template(      buf[i] = (uint8_t) temporary;                                    \
+)w2c_template"
+R"w2c_template(      temporary = (sizeof(t1) > 1) ? (temporary >> 8) : 0;             \
+)w2c_template"
+R"w2c_template(    }                                                                  \
+)w2c_template"
+R"w2c_template(    wasm_rt_memcpy(&mem->data[addr], buf, sizeof(t1));                 \
 )w2c_template"
 R"w2c_template(  }
 )w2c_template"
-R"w2c_template(#endif
-)w2c_template"
 R"w2c_template(
-DEFINE_LOAD(i32_load, u32, u32, u32, FORCE_READ_INT)
+DEFINE_LOAD(i32_load, u32, u32, u32, u32, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i64_load, u64, u64, u64, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i64_load, u64, u64, u64, u64, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(f32_load, f32, f32, f32, FORCE_READ_FLOAT)
+R"w2c_template(DEFINE_LOAD(f32_load, f32, f32, f32, u32, FORCE_READ_FLOAT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(f64_load, f64, f64, f64, FORCE_READ_FLOAT)
+R"w2c_template(DEFINE_LOAD(f64_load, f64, f64, f64, u64, FORCE_READ_FLOAT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i32_load8_s, s8, s32, u32, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i32_load8_s, s8, s32, u32, u8, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i64_load8_s, s8, s64, u64, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i64_load8_s, s8, s64, u64, u8, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i32_load8_u, u8, u32, u32, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i32_load8_u, u8, u32, u32, u8, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i64_load8_u, u8, u64, u64, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i64_load8_u, u8, u64, u64, u8, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i32_load16_s, s16, s32, u32, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i32_load16_s, s16, s32, u32, u16, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i64_load16_s, s16, s64, u64, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i64_load16_s, s16, s64, u64, u16, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i32_load16_u, u16, u32, u32, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i32_load16_u, u16, u32, u32, u16, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i64_load16_u, u16, u64, u64, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i64_load16_u, u16, u64, u64, u16, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i64_load32_s, s32, s64, u64, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i64_load32_s, s32, s64, u64, u32, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_LOAD(i64_load32_u, u32, u64, u64, FORCE_READ_INT)
+R"w2c_template(DEFINE_LOAD(i64_load32_u, u32, u64, u64, u32, FORCE_READ_INT)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(i32_store, u32, u32)
+R"w2c_template(DEFINE_STORE(i32_store, u32, u32, u32)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(i64_store, u64, u64)
+R"w2c_template(DEFINE_STORE(i64_store, u64, u64, u64)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(f32_store, f32, f32)
+R"w2c_template(DEFINE_STORE(f32_store, f32, f32, u32)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(f64_store, f64, f64)
+R"w2c_template(DEFINE_STORE(f64_store, f64, f64, u64)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(i32_store8, u8, u32)
+R"w2c_template(DEFINE_STORE(i32_store8, u8, u32, u8)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(i32_store16, u16, u32)
+R"w2c_template(DEFINE_STORE(i32_store16, u16, u32, u16)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(i64_store8, u8, u64)
+R"w2c_template(DEFINE_STORE(i64_store8, u8, u64, u8)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(i64_store16, u16, u64)
+R"w2c_template(DEFINE_STORE(i64_store16, u16, u64, u16)
 )w2c_template"
-R"w2c_template(DEFINE_STORE(i64_store32, u32, u64)
+R"w2c_template(DEFINE_STORE(i64_store32, u32, u64, u32)
 )w2c_template"
 R"w2c_template(
 #if defined(_MSC_VER)

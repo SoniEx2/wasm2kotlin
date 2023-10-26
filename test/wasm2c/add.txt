@@ -134,43 +134,6 @@ static inline bool func_types_eq(const wasm_rt_func_type_t a,
 #define FORCE_READ_FLOAT(var)
 #endif
 
-#if WABT_BIG_ENDIAN
-static inline void load_data(void* dest, const void* src, size_t n) {
-  if (!n) {
-    return;
-  }
-  size_t i = 0;
-  u8* dest_chars = dest;
-  wasm_rt_memcpy(dest, src, n);
-  for (i = 0; i < (n >> 1); i++) {
-    u8 cursor = dest_chars[i];
-    dest_chars[i] = dest_chars[n - i - 1];
-    dest_chars[n - i - 1] = cursor;
-  }
-}
-#define LOAD_DATA(m, o, i, s)                   \
-  do {                                          \
-    RANGE_CHECK((&m), m.size - o - s, s);       \
-    load_data(&(m.data[m.size - o - s]), i, s); \
-  } while (0)
-#define DEFINE_LOAD(name, t1, t2, t3, force_read)                      \
-  static inline t3 name(wasm_rt_memory_t* mem, u64 addr) {             \
-    MEMCHECK(mem, addr, t1);                                           \
-    t1 result;                                                         \
-    wasm_rt_memcpy(&result, &mem->data[mem->size - addr - sizeof(t1)], \
-                   sizeof(t1));                                        \
-    force_read(result);                                                \
-    return (t3)(t2)result;                                             \
-  }
-
-#define DEFINE_STORE(name, t1, t2)                                      \
-  static inline void name(wasm_rt_memory_t* mem, u64 addr, t2 value) {  \
-    MEMCHECK(mem, addr, t1);                                            \
-    t1 wrapped = (t1)value;                                             \
-    wasm_rt_memcpy(&mem->data[mem->size - addr - sizeof(t1)], &wrapped, \
-                   sizeof(t1));                                         \
-  }
-#else
 static inline void load_data(void* dest, const void* src, size_t n) {
   if (!n) {
     return;
@@ -182,46 +145,57 @@ static inline void load_data(void* dest, const void* src, size_t n) {
     RANGE_CHECK((&m), o, s);       \
     load_data(&(m.data[o]), i, s); \
   } while (0)
-#define DEFINE_LOAD(name, t1, t2, t3, force_read)          \
+#define DEFINE_LOAD(name, t1, t2, t3, t4, force_read)      \
   static inline t3 name(wasm_rt_memory_t* mem, u64 addr) { \
     MEMCHECK(mem, addr, t1);                               \
     t1 result;                                             \
-    wasm_rt_memcpy(&result, &mem->data[addr], sizeof(t1)); \
+    t4 temporary = 0;                                      \
+    for (int i = sizeof(t1) - 1; i >= 0; --i) {            \
+      temporary = (sizeof(t1) > 1) ? (temporary << 8) : 0; \
+      temporary |= (t4)(mem->data[addr+i]);              \
+    }                                                      \
+    wasm_rt_memcpy(&result, &temporary, sizeof(t1));       \
     force_read(result);                                    \
     return (t3)(t2)result;                                 \
   }
 
-#define DEFINE_STORE(name, t1, t2)                                     \
+#define DEFINE_STORE(name, t1, t2, t3)                                 \
   static inline void name(wasm_rt_memory_t* mem, u64 addr, t2 value) { \
     MEMCHECK(mem, addr, t1);                                           \
     t1 wrapped = (t1)value;                                            \
-    wasm_rt_memcpy(&mem->data[addr], &wrapped, sizeof(t1));            \
+    t3 temporary;                                                      \
+    uint8_t buf[sizeof(t1)];                                           \
+    wasm_rt_memcpy(&temporary, &wrapped, sizeof(t1));                  \
+    for (int i = 0; i < sizeof(t1); ++i) {                             \
+      buf[i] = (uint8_t) temporary;                                    \
+      temporary = (sizeof(t1) > 1) ? (temporary >> 8) : 0;             \
+    }                                                                  \
+    wasm_rt_memcpy(&mem->data[addr], buf, sizeof(t1));                 \
   }
-#endif
 
-DEFINE_LOAD(i32_load, u32, u32, u32, FORCE_READ_INT)
-DEFINE_LOAD(i64_load, u64, u64, u64, FORCE_READ_INT)
-DEFINE_LOAD(f32_load, f32, f32, f32, FORCE_READ_FLOAT)
-DEFINE_LOAD(f64_load, f64, f64, f64, FORCE_READ_FLOAT)
-DEFINE_LOAD(i32_load8_s, s8, s32, u32, FORCE_READ_INT)
-DEFINE_LOAD(i64_load8_s, s8, s64, u64, FORCE_READ_INT)
-DEFINE_LOAD(i32_load8_u, u8, u32, u32, FORCE_READ_INT)
-DEFINE_LOAD(i64_load8_u, u8, u64, u64, FORCE_READ_INT)
-DEFINE_LOAD(i32_load16_s, s16, s32, u32, FORCE_READ_INT)
-DEFINE_LOAD(i64_load16_s, s16, s64, u64, FORCE_READ_INT)
-DEFINE_LOAD(i32_load16_u, u16, u32, u32, FORCE_READ_INT)
-DEFINE_LOAD(i64_load16_u, u16, u64, u64, FORCE_READ_INT)
-DEFINE_LOAD(i64_load32_s, s32, s64, u64, FORCE_READ_INT)
-DEFINE_LOAD(i64_load32_u, u32, u64, u64, FORCE_READ_INT)
-DEFINE_STORE(i32_store, u32, u32)
-DEFINE_STORE(i64_store, u64, u64)
-DEFINE_STORE(f32_store, f32, f32)
-DEFINE_STORE(f64_store, f64, f64)
-DEFINE_STORE(i32_store8, u8, u32)
-DEFINE_STORE(i32_store16, u16, u32)
-DEFINE_STORE(i64_store8, u8, u64)
-DEFINE_STORE(i64_store16, u16, u64)
-DEFINE_STORE(i64_store32, u32, u64)
+DEFINE_LOAD(i32_load, u32, u32, u32, u32, FORCE_READ_INT)
+DEFINE_LOAD(i64_load, u64, u64, u64, u64, FORCE_READ_INT)
+DEFINE_LOAD(f32_load, f32, f32, f32, u32, FORCE_READ_FLOAT)
+DEFINE_LOAD(f64_load, f64, f64, f64, u64, FORCE_READ_FLOAT)
+DEFINE_LOAD(i32_load8_s, s8, s32, u32, u8, FORCE_READ_INT)
+DEFINE_LOAD(i64_load8_s, s8, s64, u64, u8, FORCE_READ_INT)
+DEFINE_LOAD(i32_load8_u, u8, u32, u32, u8, FORCE_READ_INT)
+DEFINE_LOAD(i64_load8_u, u8, u64, u64, u8, FORCE_READ_INT)
+DEFINE_LOAD(i32_load16_s, s16, s32, u32, u16, FORCE_READ_INT)
+DEFINE_LOAD(i64_load16_s, s16, s64, u64, u16, FORCE_READ_INT)
+DEFINE_LOAD(i32_load16_u, u16, u32, u32, u16, FORCE_READ_INT)
+DEFINE_LOAD(i64_load16_u, u16, u64, u64, u16, FORCE_READ_INT)
+DEFINE_LOAD(i64_load32_s, s32, s64, u64, u32, FORCE_READ_INT)
+DEFINE_LOAD(i64_load32_u, u32, u64, u64, u32, FORCE_READ_INT)
+DEFINE_STORE(i32_store, u32, u32, u32)
+DEFINE_STORE(i64_store, u64, u64, u64)
+DEFINE_STORE(f32_store, f32, f32, u32)
+DEFINE_STORE(f64_store, f64, f64, u64)
+DEFINE_STORE(i32_store8, u8, u32, u8)
+DEFINE_STORE(i32_store16, u16, u32, u16)
+DEFINE_STORE(i64_store8, u8, u64, u8)
+DEFINE_STORE(i64_store16, u16, u64, u16)
+DEFINE_STORE(i64_store32, u32, u64, u32)
 
 #if defined(_MSC_VER)
 
