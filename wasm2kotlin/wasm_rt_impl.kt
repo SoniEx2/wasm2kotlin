@@ -103,6 +103,7 @@ class Memory(initial_pages: Int, max_pages: Int) {
     val pages: Int
         get() = mem.capacity() / PAGE_SIZE;
 
+    @Deprecated("replaced with base64 and ByteArray")
     fun put(offset: Int, bytes_as_ucs2: String, size: Int) {
         val temp = mem.duplicate()
         // duplicate resets byte order
@@ -122,6 +123,63 @@ class Memory(initial_pages: Int, max_pages: Int) {
             throw RangeException(null, e)
         } catch(e: IndexOutOfBoundsException) {
             throw RangeException(null, e)
+        }
+    }
+
+    fun put(offset: Int, bytes: ByteArray) {
+        if (offset < 0 || offset > mem.limit() || mem.limit() - offset < bytes.size) {
+            throw RangeException()
+        }
+        val tempdst = mem.duplicate()
+        tempdst.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        tempdst.position(offset)
+        tempdst.limit(offset+bytes.size)
+        tempdst.put(bytes)
+    }
+
+    fun fill(offset: Int, value: Int, len: Int) {
+        if (offset < 0 || len < 0 || offset > mem.limit() || mem.limit() - offset < len) {
+            throw RangeException()
+        }
+        val temp = mem.duplicate()
+        val b = value.toByte()
+        temp.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        temp.position(offset)
+        temp.limit(offset+len)
+        while (temp.remaining() > 0) {
+            temp.put(b)
+        }
+    }
+
+    fun memory_init(bytes: ByteArray, dstoff: Int, srcoff: Int, len: Int) {
+        if (srcoff < 0 || dstoff < 0 || len < 0 || dstoff > mem.limit() || mem.limit() - dstoff < len || srcoff > bytes.size || bytes.size - srcoff < len) {
+            throw RangeException()
+        }
+        val tempdst = mem.duplicate()
+        tempdst.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        tempdst.position(dstoff)
+        tempdst.limit(dstoff+len)
+        tempdst.put(bytes, srcoff, len)
+    }
+
+    fun copy_from(src: Memory, dstoff: Int, srcoff: Int, len: Int) {
+        if (srcoff < 0 || dstoff < 0 || len < 0 || dstoff > mem.limit() || mem.limit() - dstoff < len || srcoff > src.mem.limit() || src.mem.limit() - srcoff < len) {
+            throw RangeException()
+        }
+        val tempdst = mem.duplicate()
+        val tempsrc = src.mem.duplicate()
+        tempdst.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        tempsrc.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        if (dstoff < srcoff) {
+            tempdst.position(dstoff)
+            tempsrc.position(srcoff)
+            tempdst.limit(dstoff+len)
+            tempsrc.limit(srcoff+len)
+            tempdst.put(tempsrc)
+        } else {
+            for (x in len-1 downTo 0) {
+                tempdst.put(dstoff+x, tempsrc.get(srcoff+x))
+            }
         }
     }
 
@@ -241,6 +299,36 @@ class Table(elements: Int, max_elements: Int) {
             throw RangeException(null, e)
         }
     }
+
+    fun table_init(dstoff: Int, src: Array<ElemSegExpr?>, srcoff: Int, len: Int, functypes: IntArray) {
+        if (srcoff < 0 || dstoff < 0 || len < 0 || dstoff > elems.size || elems.size - dstoff < len || srcoff > src.size || src.size - srcoff < len) {
+            throw RangeException()
+        }
+        if (len == 0) {
+            return
+        }
+        for (x in 0..<len) {
+            elems.set(dstoff+x, when (val elem = src[srcoff+x]) {
+                null -> null;
+                is Func -> Elem(functypes[elem.type], elem.func);
+                else -> throw RuntimeException("???");
+            })
+        }
+    }
+
+    fun copy_from(src: Table, dstoff: Int, srcoff: Int, len: Int) {
+        if (srcoff < 0 || dstoff < 0 || len < 0 || dstoff > elems.size || elems.size - dstoff < len || srcoff > src.elems.size || src.elems.size - srcoff < len) {
+            throw RangeException()
+        }
+        for (x in if (dstoff < srcoff) { 0..<len } else { len-1 downTo 0 }) {
+            elems.set(dstoff+x, src.elems[srcoff+x])
+        }
+    }
+}
+
+interface ElemSegExpr {
+}
+data class Func(val type: Int, val func: Function<*>): ElemSegExpr {
 }
 
 data class Elem(val type: Int, val func: Function<*>) {
@@ -334,6 +422,9 @@ class Tag<T: Function<Unit>>() {
         return TaggedException(this, unwrap)
     }
 }
+
+private val B64DEC: java.util.Base64.Decoder = java.util.Base64.getDecoder();
+fun loadb64(s: String): ByteArray = B64DEC.decode(s);
 
 // NOTE(Soni): these are inline not for "performance" but for code size.
 // kept running into "Method too large", this should help with *some* of them.

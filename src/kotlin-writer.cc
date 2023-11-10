@@ -249,8 +249,6 @@ class KotlinWriter {
  private:
   typedef std::set<std::string> SymbolSet;
   typedef std::map<std::string, std::string> SymbolMap;
-  typedef std::map<std::string, Type> TypeMap;
-  typedef std::map<std::string, ExternalKind> ExtKindMap;
   typedef std::pair<Index, Type> StackTypePair;
   typedef std::map<StackTypePair, std::string> StackVarSymbolMap;
   typedef std::map<Index, FuncDeclaration> CallIndirectDeclMap;
@@ -290,14 +288,8 @@ class KotlinWriter {
   std::string DefineName(SymbolSet*, std::string_view);
   std::string DefineImportName(const std::string& name,
                                std::string_view module_name,
-                               std::string_view mangled_field_name,
-                               Type type);
-  std::string DefineImportName(const std::string& name,
-                               std::string_view module_name,
-                               std::string_view mangled_field_name,
-                               ExternalKind type);
-  std::string DefineGlobalScopeName(const std::string&, Type);
-  std::string DefineGlobalScopeName(const std::string&, ExternalKind);
+                               std::string_view mangled_field_name);
+  std::string DefineGlobalScopeName(const std::string&);
   std::string DefineLocalScopeName(const std::string&);
   std::string DefineStackVarName(Index, Type, std::string_view);
   void DefineCallIndirect(Index, const FuncDeclaration&);
@@ -373,7 +365,9 @@ class KotlinWriter {
   void WriteMemory(const std::string&);
   void WriteTables();
   void WriteTable(const std::string&);
+  void WriteDataSegmentData(const DataSegment* data_segment);
   void WriteDataInitializers();
+  void WriteElemSegmentExprs(const ElemSegment* elem_segment);
   void WriteElemInitializers();
   void WriteExports();
   void WriteInit();
@@ -431,8 +425,6 @@ class KotlinWriter {
   bool should_write_indent_next_ = false;
   bool unreachable_ = false;
 
-  TypeMap type_map_;
-  ExtKindMap extkind_map_;
   SymbolMap global_sym_map_;
   SymbolMap module_import_sym_map_;
   SymbolMap local_sym_map_;
@@ -687,43 +679,20 @@ std::string_view StripLeadingDollar(std::string_view name) {
   return name;
 }
 
-std::string KotlinWriter::DefineImportName(const std::string& name,
-                                           std::string_view module,
-                                           std::string_view mangled_field_name,
-                                           Type type) {
+std::string KotlinWriter::DefineImportName(
+    const std::string& name,
+    std::string_view module,
+    std::string_view mangled_field_name) {
   std::string mangled(mangled_field_name);
   import_syms_.insert(name);
   std::string unique = DefineName(&global_syms_, mangled);
   global_sym_map_.insert(SymbolMap::value_type(name, unique));
-  type_map_.insert(TypeMap::value_type(unique, type));
   return unique;
 }
 
-std::string KotlinWriter::DefineImportName(const std::string& name,
-                                           std::string_view module,
-                                           std::string_view mangled_field_name,
-                                           ExternalKind type) {
-  std::string mangled(mangled_field_name);
-  import_syms_.insert(name);
-  std::string unique = DefineName(&global_syms_, mangled);
-  global_sym_map_.insert(SymbolMap::value_type(name, unique));
-  extkind_map_.insert(ExtKindMap::value_type(unique, type));
-  return unique;
-}
-
-std::string KotlinWriter::DefineGlobalScopeName(const std::string& name,
-                                                Type type) {
+std::string KotlinWriter::DefineGlobalScopeName(const std::string& name) {
   std::string unique = DefineName(&global_syms_, StripLeadingDollar(name));
   global_sym_map_.insert(SymbolMap::value_type(name, unique));
-  type_map_.insert(TypeMap::value_type(unique, type));
-  return unique;
-}
-
-std::string KotlinWriter::DefineGlobalScopeName(const std::string& name,
-                                                ExternalKind type) {
-  std::string unique = DefineName(&global_syms_, StripLeadingDollar(name));
-  global_sym_map_.insert(SymbolMap::value_type(name, unique));
-  extkind_map_.insert(ExtKindMap::value_type(unique, type));
   return unique;
 }
 
@@ -1298,7 +1267,7 @@ void KotlinWriter::WriteTags() {
     const Tag* tag = *it;
 
     Write("private var ");
-    WriteTag(tag, DefineGlobalScopeName(tag->name, ExternalKind::Tag));
+    WriteTag(tag, DefineGlobalScopeName(tag->name));
     Write(" = " WASM_RT_PKG ".Tag()", Newline());
   }
 }
@@ -1336,8 +1305,8 @@ void KotlinWriter::WriteImports() {
         Write("val ");
         const Func& func = cast<FuncImport>(import)->func;
         mangled = MangleName(import->field_name);
-        std::string name = DefineImportName(func.name, import->module_name,
-                                            mangled, Type::Func);
+        std::string name =
+            DefineImportName(func.name, import->module_name, mangled);
         Write(name, ": ");
         WriteFuncType(func.decl);
         type = "Func";
@@ -1356,7 +1325,7 @@ void KotlinWriter::WriteImports() {
         }
         mangled = MangleName(import->field_name);
         WriteGlobal(global, DefineImportName(global.name, import->module_name,
-                                             mangled, global.type));
+                                             mangled));
         break;
       }
 
@@ -1364,8 +1333,8 @@ void KotlinWriter::WriteImports() {
         Write("val ");
         const Memory& memory = cast<MemoryImport>(import)->memory;
         mangled = MangleName(import->field_name);
-        WriteMemory(DefineImportName(memory.name, import->module_name, mangled,
-                                     ExternalKind::Memory));
+        WriteMemory(
+            DefineImportName(memory.name, import->module_name, mangled));
         type = "Memory";
         break;
       }
@@ -1374,8 +1343,7 @@ void KotlinWriter::WriteImports() {
         Write("val ");
         const Table& table = cast<TableImport>(import)->table;
         mangled = MangleName(import->field_name);
-        WriteTable(DefineImportName(table.name, import->module_name, mangled,
-                                    ExternalKind::Table));
+        WriteTable(DefineImportName(table.name, import->module_name, mangled));
         type = "Table";
         break;
       }
@@ -1384,8 +1352,8 @@ void KotlinWriter::WriteImports() {
         Write("val ");
         const Tag& tag = cast<TagImport>(import)->tag;
         mangled = MangleName(import->field_name);
-        WriteTag(&tag, DefineImportName(tag.name, import->module_name, mangled,
-                                        ExternalKind::Tag));
+        WriteTag(&tag,
+                 DefineImportName(tag.name, import->module_name, mangled));
         type = "Tag";
         break;
       }
@@ -1418,7 +1386,7 @@ void KotlinWriter::AllocateFuncs() {
   for (const Func* func : module_->funcs) {
     bool is_import = func_index < module_->num_func_imports;
     if (!is_import) {
-      DefineGlobalScopeName(func->name, Type::Func);
+      DefineGlobalScopeName(func->name);
     }
     ++func_index;
   }
@@ -1438,7 +1406,7 @@ void KotlinWriter::WriteGlobals() {
         } else {
           Write("val ");
         }
-        WriteGlobal(*global, DefineGlobalScopeName(global->name, global->type));
+        WriteGlobal(*global, DefineGlobalScopeName(global->name));
         Write(";", Newline());
       }
       ++global_index;
@@ -1475,7 +1443,7 @@ void KotlinWriter::WriteMemories() {
     bool is_import = memory_index < module_->num_memory_imports;
     if (!is_import) {
       Write("private var ");
-      WriteMemory(DefineGlobalScopeName(memory->name, ExternalKind::Memory));
+      WriteMemory(DefineGlobalScopeName(memory->name));
       uint32_t max =
           memory->page_limits.has_max ? memory->page_limits.max : 65536;
       Write(" = " WASM_RT_PKG ".Memory(", memory->page_limits.initial, ", ");
@@ -1503,7 +1471,7 @@ void KotlinWriter::WriteTables() {
     bool is_import = table_index < module_->num_table_imports;
     if (!is_import) {
       Write("private var ");
-      WriteTable(DefineGlobalScopeName(table->name, ExternalKind::Table));
+      WriteTable(DefineGlobalScopeName(table->name));
       uint32_t max =
           table->elem_limits.has_max ? table->elem_limits.max : UINT32_MAX;
       Write(" = " WASM_RT_PKG ".Table(", table->elem_limits.initial, ", ");
@@ -1518,116 +1486,140 @@ void KotlinWriter::WriteTable(const std::string& name) {
   Write(name, ": " WASM_RT_PKG ".Table");
 }
 
-void KotlinWriter::WriteDataInitializers() {
-  const Memory* memory = nullptr;
-  Index data_segment_index = 0;
+static inline bool is_droppable(const DataSegment* data_segment) {
+  return (data_segment->kind == SegmentKind::Passive) &&
+         (!data_segment->data.empty());
+}
 
-  if (!module_->memories.empty()) {
-    if (module_->data_segments.empty()) {
-      Write(Newline());
-    } else {
-      for (const DataSegment* data_segment : module_->data_segments) {
-        Write(Newline(), "private val data_segment_data_", data_segment_index,
-              ": String = \"");
-        size_t i = 0;
-        uint8_t bottom = 0;
-        for (uint8_t x : data_segment->data) {
-          if ((i++ % 2) == 0) {
-            Write("\\u");
-            bottom = x;
-          } else {
-            // NOTE(Soni): we *want* these swapped because reasons
-            Writef("%02hhx%02hhx", x, bottom);
-          }
-        }
-        if ((i % 2) == 1) {
-          Writef("00%02hhx", bottom);
-        }
-        Write("\";", Newline());
-        ++data_segment_index;
-      }
+// base64 is better, inspired by:
+// https://thephd.dev/implementing-embed-c-and-c++
+const char base64_alphabet[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+void KotlinWriter::WriteDataSegmentData(const DataSegment* data_segment) {
+  size_t i = 0;
+  uint32_t data = 0;
+  for (uint8_t x : data_segment->data) {
+    data = (data << 8) | x;
+    if ((i++ % 3) == 2) {
+      Writef("%c", base64_alphabet[(data >> 18) & 0x3F]);
+      Writef("%c", base64_alphabet[(data >> 12) & 0x3F]);
+      Writef("%c", base64_alphabet[(data >> 6) & 0x3F]);
+      Writef("%c", base64_alphabet[(data)&0x3F]);
     }
+  }
+  if ((i % 3) == 1) {
+    data = data << 4;
+    Writef("%c", base64_alphabet[(data >> 6) & 0x3F]);
+    Writef("%c", base64_alphabet[(data)&0x3F]);
+  } else if ((i % 3) == 2) {
+    data = data << 2;
+    Writef("%c", base64_alphabet[(data >> 12) & 0x3F]);
+    Writef("%c", base64_alphabet[(data >> 6) & 0x3F]);
+    Writef("%c", base64_alphabet[(data)&0x3F]);
+  }
+}
 
-    memory = module_->memories[0];
+void KotlinWriter::WriteDataInitializers() {
+  for (const DataSegment* data_segment : module_->data_segments) {
+    DefineGlobalScopeName(data_segment->name);
+    if (data_segment->data.size()) {
+      Write(Newline(), "private ", is_droppable(data_segment) ? "var" : "val",
+            " data_segment_data_", GlobalName(data_segment->name),
+            ": ByteArray = " WASM_RT_PKG ".loadb64(\"");
+      WriteDataSegmentData(data_segment);
+      Write("\");", Newline());
+    }
   }
 
   Write(Newline(), "init /* memory */ ", OpenBrace());
-  data_segment_index = 0;
   for (const DataSegment* data_segment : module_->data_segments) {
-    Write(GetGlobalName(memory->name), ".put(");
+    if (data_segment->kind != SegmentKind::Active) {
+      continue;
+    }
+    const Memory* memory =
+        module_->memories[module_->GetMemoryIndex(data_segment->memory_var)];
+    Write(GlobalName(memory->name), ".put(");
     WriteInitExpr(data_segment->offset);
-    Write(", data_segment_data_", data_segment_index, ", ",
-          data_segment->data.size(), ");", Newline());
-    ++data_segment_index;
+    if (data_segment->data.empty()) {
+      Write(", byteArrayOf());", Newline());
+    } else {
+      Write(", " WASM_RT_PKG ".loadb64(\"");
+      WriteDataSegmentData(data_segment);
+      Write("\"));", Newline());
+    }
   }
 
   Write(CloseBrace(), Newline());
 }
 
-void KotlinWriter::WriteElemInitializers() {
-  if (!module_->types.size()) {
-    // If there are no types there cannot be any table entries either.
-    for (const ElemSegment* elem_segment : module_->elem_segments) {
-      assert(elem_segment->elem_exprs.size() == 0);
+static inline bool is_droppable(const ElemSegment* elem_segment) {
+  return (elem_segment->kind == SegmentKind::Passive) &&
+         (!elem_segment->elem_exprs.empty());
+}
+
+void KotlinWriter::WriteElemSegmentExprs(const ElemSegment* elem_segment) {
+  for (const ExprList& elem_expr : elem_segment->elem_exprs) {
+    assert(elem_expr.size() == 1);
+    const Expr& expr = elem_expr.front();
+    switch (expr.type()) {
+      case ExprType::RefFunc: {
+        const Func* func = module_->GetFunc(cast<RefFuncExpr>(&expr)->var);
+        const Index func_type_index =
+            module_->GetFuncTypeIndex(func->decl.type_var);
+        bool is_import = import_syms_.count(func->name) != 0;
+        Write(WASM_RT_PKG ".Func(", func_type_index, ", ");
+        if (!is_import) {
+          Write(ExternalPtr(func->name));
+        } else {
+          Write(GlobalName(func->name));
+        }
+        Write("), ", Newline());
+      } break;
+      case ExprType::RefNull:
+        Write("null, ", Newline());
+        break;
+      default:
+        WABT_UNREACHABLE;
     }
-    return;
+  }
+}
+
+void KotlinWriter::WriteElemInitializers() {
+  for (const ElemSegment* elem_segment : module_->elem_segments) {
+    if (!is_droppable(elem_segment)) {
+      continue;
+    }
+
+    DefineGlobalScopeName(elem_segment->name);
+    Write(Newline(), "private var elem_segment_exprs_",
+          GlobalName(elem_segment->name),
+          ": Array<" WASM_RT_PKG ".ElemSegExpr?> = arrayOf(");
+    WriteElemSegmentExprs(elem_segment);
+    Write(");", Newline());
   }
 
   const Table* table = module_->tables.empty() ? nullptr : module_->tables[0];
-  bool emit_offset = false;
-  for (const ElemSegment* elem_segment : module_->elem_segments) {
-    if (elem_segment->kind == SegmentKind::Passive) {
-      continue;
-    }
-    for (const ExprList& elem_expr : elem_segment->elem_exprs) {
-      // We don't support the bulk-memory proposal here, so we know that we
-      // don't have any passive segments (where ref.null can be used).
-      assert(elem_expr.size() == 1);
-      emit_offset = true;
-      break;
-    }
-    if (emit_offset) {
-      break;
-    }
-  }
 
   Write(Newline(), "init /* table */ ", OpenBrace());
-  if (emit_offset) {
-    Write("var offset: Int", Newline());
-  }
-  Index elem_segment_index = 0;
   for (const ElemSegment* elem_segment : module_->elem_segments) {
-    if (elem_segment->kind == SegmentKind::Passive) {
+    if (elem_segment->kind != SegmentKind::Active) {
       continue;
     }
-    if (emit_offset) {
-      Write("offset = ");
-      WriteInitExpr(elem_segment->offset);
-      Write(";", Newline());
-    }
 
-    size_t i = 0;
-    for (const ExprList& elem_expr : elem_segment->elem_exprs) {
-      // We don't support the bulk-memory proposal here, so we know that we
-      // don't have any passive segments (where ref.null can be used).
-      assert(elem_expr.size() == 1);
-      const Expr* expr = &elem_expr.front();
-      assert(expr->type() == ExprType::RefFunc);
-      const Func* func = module_->GetFunc(cast<RefFuncExpr>(expr)->var);
-      Index func_type_index = module_->GetFuncTypeIndex(func->decl.type_var);
-      bool is_import = import_syms_.count(func->name) != 0;
-
-      Write(GetGlobalName(table->name), "[offset + ", i,
-            "] = " WASM_RT_PKG ".Elem(func_types[", func_type_index, "], ");
-      if (!is_import) {
-        Write(ExternalPtr(func->name));
-      } else {
-        Write(GlobalName(func->name));
-      }
-      Write(");", Newline());
-      ++i;
+    Write(GlobalName(table->name), ".table_init(");
+    WriteInitExpr(elem_segment->offset);
+    if (elem_segment->elem_exprs.empty()) {
+      // It's mandatory to handle the case of a zero-length elem segment
+      // (even in a module with no types). This must trap if the offset
+      // is out of bounds.
+      Write(", arrayOf(), 0, 0, intArrayOf());", Newline());
+    } else {
+      Write(", arrayOf(");
+      WriteElemSegmentExprs(elem_segment);
+      Write("), 0, ", elem_segment->elem_exprs.size(), ", func_types);",
+            Newline());
     }
-    ++elem_segment_index;
   }
 
   Write(CloseBrace(), Newline());
@@ -1751,7 +1743,7 @@ void KotlinWriter::Write(const Func& func) {
   MakeTypeBindingReverseMapping(func_->GetNumParamsAndLocals(), func_->bindings,
                                 &index_to_name);
 
-  Write("fun ", GlobalName(func.name), "(");
+  Write("private fun ", GlobalName(func.name), "(");
   WriteParams(index_to_name, to_shadow);
   Write(": ", ResultType(func.decl.sig.result_types), OpenBrace());
   WriteLocals(index_to_name, to_shadow);
@@ -2515,13 +2507,110 @@ void KotlinWriter::Write(const ExprList& exprs) {
         break;
       }
 
-      case ExprType::MemoryCopy:
-      case ExprType::DataDrop:
-      case ExprType::MemoryInit:
-      case ExprType::MemoryFill:
-      case ExprType::TableCopy:
-      case ExprType::ElemDrop:
-      case ExprType::TableInit:
+      case ExprType::MemoryFill: {
+        const auto inst = cast<MemoryFillExpr>(&expr);
+        Memory* memory =
+            module_->memories[module_->GetMemoryIndex(inst->memidx)];
+        StackValue svsize = PopValue();
+        StackValue svbyte = PopValue();
+        StackValue svaddr = PopValue();
+        DropTypes(3);
+        SpillValues();
+        Write(GlobalName(memory->name), ".fill(", svaddr.value, ", ",
+              svbyte.value, ", ", svsize.value, ");");
+      } break;
+
+      case ExprType::MemoryCopy: {
+        const auto inst = cast<MemoryCopyExpr>(&expr);
+        Memory* dest_memory =
+            module_->memories[module_->GetMemoryIndex(inst->destmemidx)];
+        const Memory* src_memory = module_->GetMemory(inst->srcmemidx);
+        StackValue svsize = PopValue();
+        StackValue srcaddr = PopValue();
+        StackValue dstaddr = PopValue();
+        DropTypes(3);
+        SpillValues();
+        Write(GlobalName(dest_memory->name), ".copy_from(",
+              GlobalName(src_memory->name), ", ", dstaddr.value, ", ",
+              srcaddr.value, ", ", svsize.value, ");", Newline());
+      } break;
+
+      case ExprType::MemoryInit: {
+        const auto inst = cast<MemoryInitExpr>(&expr);
+        Memory* dest_memory =
+            module_->memories[module_->GetMemoryIndex(inst->memidx)];
+        const DataSegment* src_data = module_->GetDataSegment(inst->var);
+        StackValue svsize = PopValue();
+        StackValue srcaddr = PopValue();
+        StackValue dstaddr = PopValue();
+        DropTypes(3);
+        SpillValues();
+        Write(GlobalName(dest_memory->name), ".memory_init(");
+        if (is_droppable(src_data)) {
+          Write("data_segment_data_", GlobalName(src_data->name));
+        } else {
+          Write("byteArrayOf()");
+        }
+        Write(", ", dstaddr.value, ", ", srcaddr.value, ", ", svsize.value,
+              ");", Newline());
+      } break;
+
+      case ExprType::TableInit: {
+        const auto inst = cast<TableInitExpr>(&expr);
+        Table* dest_table =
+            module_->tables[module_->GetTableIndex(inst->table_index)];
+        const ElemSegment* src_segment =
+            module_->GetElemSegment(inst->segment_index);
+        StackValue svsize = PopValue();
+        StackValue srcaddr = PopValue();
+        StackValue dstaddr = PopValue();
+        DropTypes(3);
+        SpillValues();
+        Write(GlobalName(dest_table->name), ".table_init(", dstaddr.value);
+        if (is_droppable(src_segment)) {
+          Write(", elem_segment_exprs_", GlobalName(src_segment->name));
+        } else {
+          Write(", arrayOf()");
+        }
+        Write(", ", srcaddr.value, ", ", svsize.value, ", func_types);",
+              Newline());
+      } break;
+
+      case ExprType::DataDrop: {
+        const auto inst = cast<DataDropExpr>(&expr);
+        const DataSegment* data = module_->GetDataSegment(inst->var);
+        if (is_droppable(data)) {
+          SpillValues();
+          Write("data_segment_data_", GlobalName(data->name),
+                " = byteArrayOf();", Newline());
+        }
+      } break;
+
+      case ExprType::ElemDrop: {
+        const auto inst = cast<ElemDropExpr>(&expr);
+        const ElemSegment* seg = module_->GetElemSegment(inst->var);
+        if (is_droppable(seg)) {
+          SpillValues();
+          Write("elem_segment_exprs_", GlobalName(seg->name), " = arrayOf();",
+                Newline());
+        }
+      } break;
+
+      case ExprType::TableCopy: {
+        const auto inst = cast<TableCopyExpr>(&expr);
+        Table* dest_table =
+            module_->tables[module_->GetTableIndex(inst->dst_table)];
+        const Table* src_table = module_->GetTable(inst->src_table);
+        StackValue svsize = PopValue();
+        StackValue srcaddr = PopValue();
+        StackValue dstaddr = PopValue();
+        DropTypes(3);
+        SpillValues();
+        Write(GlobalName(dest_table->name), ".copy_from(",
+              GlobalName(src_table->name), ", ", dstaddr.value, ", ",
+              srcaddr.value, ", ", svsize.value, ");", Newline());
+      } break;
+
       case ExprType::TableGet:
       case ExprType::TableSet:
       case ExprType::TableGrow:
@@ -3479,9 +3568,9 @@ void KotlinWriter::WriteKotlinSource() {
   WriteMemories();
   WriteTables();
   WriteExports();
-  WriteFuncs();
   WriteElemInitializers();
   WriteDataInitializers();
+  WriteFuncs();
   WriteInit();
   WriteCallIndirectDefinitions();
   WriteSourceBottom();
