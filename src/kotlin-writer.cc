@@ -1225,14 +1225,15 @@ void KotlinWriter::WriteSourceBottom() {
 }
 
 void KotlinWriter::WriteFuncTypes() {
-  if (!module_->types.size()) {
+  if (module_->types.empty()) {
     return;
   }
+
   Write(Newline());
   Writef("private val func_types: IntArray = IntArray(%" PRIzd ")",
          module_->types.size());
-  Write(Newline(), Newline());
-  Write("init /* func_types */", OpenBrace());
+  Write(Newline());
+  Write(Newline(), "init /* func_types */", OpenBrace());
   Index func_type_index = 0;
   for (TypeEntry* type : module_->types) {
     FuncType* func_type = cast<FuncType>(type);
@@ -1393,6 +1394,10 @@ void KotlinWriter::AllocateFuncs() {
 }
 
 void KotlinWriter::WriteGlobals() {
+  if (module_->globals.empty()) {
+    return;
+  }
+
   Index global_index = 0;
   if (module_->globals.size() != module_->num_global_imports) {
     Write(Newline());
@@ -1522,17 +1527,23 @@ void KotlinWriter::WriteDataSegmentData(const DataSegment* data_segment) {
 
 void KotlinWriter::WriteDataInitializers() {
   for (const DataSegment* data_segment : module_->data_segments) {
-    DefineGlobalScopeName(data_segment->name);
-    if (data_segment->data.size()) {
-      Write(Newline(), "private ", is_droppable(data_segment) ? "var" : "val",
-            " data_segment_data_", GlobalName(data_segment->name),
-            ": ByteArray = " WASM_RT_PKG ".loadb64(\"");
-      WriteDataSegmentData(data_segment);
-      Write("\");", Newline());
+    if (!is_droppable(data_segment)) {
+      continue;
     }
+
+    DefineGlobalScopeName(data_segment->name);
+    Write(Newline(), "private ", is_droppable(data_segment) ? "var" : "val",
+          " data_segment_data_", GlobalName(data_segment->name),
+          ": ByteArray = " WASM_RT_PKG ".loadb64(\"");
+    WriteDataSegmentData(data_segment);
+    Write("\");", Newline());
   }
 
-  Write(Newline(), "init /* memory */ ", OpenBrace());
+  if (module_->memories.empty()) {
+    return;
+  }
+
+  Write(Newline(), "init /* memories */ ", OpenBrace());
   for (const DataSegment* data_segment : module_->data_segments) {
     if (data_segment->kind != SegmentKind::Active) {
       continue;
@@ -1599,9 +1610,10 @@ void KotlinWriter::WriteElemInitializers() {
     Write(");", Newline());
   }
 
+  Write(Newline(), "init /* tables */ ", OpenBrace());
+
   const Table* table = module_->tables.empty() ? nullptr : module_->tables[0];
 
-  Write(Newline(), "init /* table */ ", OpenBrace());
   for (const ElemSegment* elem_segment : module_->elem_segments) {
     if (elem_segment->kind != SegmentKind::Active) {
       continue;
