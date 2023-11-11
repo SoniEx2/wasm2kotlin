@@ -30,7 +30,7 @@
  * limitations under the License.
  */
 
-#include "src/kotlin-writer.h"
+#include "wabt/kotlin-writer.h"
 
 #include <cctype>
 #include <cinttypes>
@@ -42,13 +42,13 @@
 #include <unordered_map>
 #include <utility>
 
-#include "src/cast.h"
-#include "src/common.h"
-#include "src/ir.h"
-#include "src/literal.h"
-#include "src/set-util.h"
-#include "src/stream.h"
-#include "src/string-util.h"
+#include "wabt/cast.h"
+#include "wabt/common.h"
+#include "wabt/ir.h"
+#include "wabt/literal.h"
+#include "wabt/set-util.h"
+#include "wabt/stream.h"
+#include "wabt/string-util.h"
 
 #define INDENT_SIZE 2
 
