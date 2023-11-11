@@ -1,3 +1,13 @@
+# wasm2kotlin
+
+wasm2kotlin is a fork of wabt/wasm2c for the JVM. It attempts to track upstream
+wasm2c featureset. Below is the original README including the wasm2c feature
+matrix. (Note: For in-development proposals, i.e. those with `--enable-` flags,
+wasm2kotlin may often lag behind on updates and be incompatible with the
+current version of the proposal.)
+
+- - -
+
 [![Github CI Status](https://github.com/WebAssembly/wabt/workflows/CI/badge.svg)](https://github.com/WebAssembly/wabt)
 
 # WABT: The WebAssembly Binary Toolkit
