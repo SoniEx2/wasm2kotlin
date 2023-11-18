@@ -21,5 +21,5 @@ ENV PATH=/opt/bin/distcc_symlinks:$PATH
 
 COPY . .
 
-RUN CC=$COMPILER_ARCH-gcc CXX=$COMPILER_ARCH-g++ cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release -DTEST_TIMEOUT=$((120*8)) && \
+RUN WASM2C_CFLAGS=-DWASM_RT_USE_STACK_DEPTH_COUNT=1 CC=$COMPILER_ARCH-gcc CXX=$COMPILER_ARCH-g++ cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release -DTEST_TIMEOUT=$((120*8)) && \
     cmake --build build
