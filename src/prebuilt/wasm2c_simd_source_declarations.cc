@@ -63,7 +63,9 @@ R"w2c_template(    func(&LEADDR(mem, addr, t), value, lane);                    
 R"w2c_template(  }
 )w2c_template"
 R"w2c_template(
-#if WABT_BIG_ENDIAN
+// clang-format off
+)w2c_template"
+R"w2c_template(#if WABT_BIG_ENDIAN
 )w2c_template"
 R"w2c_template(static inline v128 v128_impl_load32_zero(const void* a) {
 )w2c_template"
@@ -71,7 +73,7 @@ R"w2c_template(  return simde_wasm_i8x16_swizzle(
 )w2c_template"
 R"w2c_template(      simde_wasm_v128_load32_zero(a),
 )w2c_template"
-R"w2c_template(      simde_wasm_i32x4_const(0x0C0D0E0F, 0x08090A0B, 0x04050607, 0x00010203));
+R"w2c_template(      simde_wasm_i8x16_const(12,13,14,15,8,9,10,11,4,5,6,7,0,1,2,3));
 )w2c_template"
 R"w2c_template(}
 )w2c_template"
@@ -81,7 +83,7 @@ R"w2c_template(  return simde_wasm_i8x16_swizzle(
 )w2c_template"
 R"w2c_template(      simde_wasm_v128_load64_zero(a),
 )w2c_template"
-R"w2c_template(      simde_wasm_i32x4_const(0x08090A0B, 0x0C0D0E0F, 0x00010203, 0x04050607));
+R"w2c_template(      simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7));
 )w2c_template"
 R"w2c_template(}
 )w2c_template"
@@ -94,9 +96,7 @@ R"w2c_template(#define v128_impl_load64_zero simde_wasm_v128_load64_zero
 R"w2c_template(#endif
 )w2c_template"
 R"w2c_template(
-// clang-format off
-)w2c_template"
-R"w2c_template(DEFINE_SIMD_LOAD_FUNC(v128_load, simde_wasm_v128_load, v128)
+DEFINE_SIMD_LOAD_FUNC(v128_load, simde_wasm_v128_load, v128)
 )w2c_template"
 R"w2c_template(
 DEFINE_SIMD_LOAD_FUNC(v128_load8_splat, simde_wasm_v128_load8_splat, u8)
@@ -385,7 +385,7 @@ R"w2c_template(#endif
 R"w2c_template(
 #if WABT_BIG_ENDIAN
 )w2c_template"
-R"w2c_template(#define v128_const(a,b,c,d) simde_wasm_i32x4_const(d,c,b,a)
+R"w2c_template(#define v128_const(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) simde_wasm_i8x16_const(p,o,n,m,l,k,j,i,h,g,f,e,d,c,b,a)
 )w2c_template"
 R"w2c_template(#define v128_i8x16_extract_lane(v, l) simde_wasm_i8x16_extract_lane(v, 15-(l))
 )w2c_template"
@@ -419,13 +419,13 @@ R"w2c_template(#define v128_f32x4_replace_lane(v, l, x) simde_wasm_f32x4_replace
 )w2c_template"
 R"w2c_template(#define v128_f64x2_replace_lane(v, l, x) simde_wasm_f64x2_replace_lane(v, 1-(l), x)
 )w2c_template"
-R"w2c_template(#define v128_i8x16_bitmask(v) simde_wasm_i8x16_bitmask(simde_wasm_i8x16_swizzle(v, simde_wasm_i32x4_const(0x0F0E0D0C, 0x0B0A0908, 0x07060504, 0x03020100)))
+R"w2c_template(#define v128_i8x16_bitmask(v) simde_wasm_i8x16_bitmask(simde_wasm_i8x16_swizzle(v, simde_wasm_i8x16_const(15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0)))
 )w2c_template"
-R"w2c_template(#define v128_i16x8_bitmask(v) simde_wasm_i16x8_bitmask(simde_wasm_i8x16_swizzle(v, simde_wasm_i32x4_const(0x0E0F0C0D, 0x0A0B0809, 0x06070405, 0x02030001)))
+R"w2c_template(#define v128_i16x8_bitmask(v) simde_wasm_i16x8_bitmask(simde_wasm_i8x16_swizzle(v, simde_wasm_i8x16_const(14,15,12,13,10,11,8,9,6,7,4,5,2,3,0,1)))
 )w2c_template"
-R"w2c_template(#define v128_i32x4_bitmask(v) simde_wasm_i32x4_bitmask(simde_wasm_i8x16_swizzle(v, simde_wasm_i32x4_const(0x0C0D0E0F, 0x08090A0B, 0x04050607, 0x00010203)))
+R"w2c_template(#define v128_i32x4_bitmask(v) simde_wasm_i32x4_bitmask(simde_wasm_i8x16_swizzle(v, simde_wasm_i8x16_const(12,13,14,15,8,9,10,11,4,5,6,7,0,1,2,3)))
 )w2c_template"
-R"w2c_template(#define v128_i64x2_bitmask(v) simde_wasm_i64x2_bitmask(simde_wasm_i8x16_swizzle(v, simde_wasm_i32x4_const(0x08090A0B, 0x0C0D0E0F, 0x00010203, 0x04050607)))
+R"w2c_template(#define v128_i64x2_bitmask(v) simde_wasm_i64x2_bitmask(simde_wasm_i8x16_swizzle(v, simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7)))
 )w2c_template"
 R"w2c_template(#define v128_i8x16_swizzle(v1, v2) simde_wasm_i8x16_swizzle(v1, simde_wasm_v128_xor(v2, simde_wasm_i8x16_splat(15)))
 )w2c_template"
@@ -485,7 +485,7 @@ R"w2c_template(  simde_wasm_i8x16_swizzle(                     \
 )w2c_template"
 R"w2c_template(      simde_wasm_i32x4_trunc_sat_f64x2_zero(a), \
 )w2c_template"
-R"w2c_template(      simde_wasm_i32x4_const(0x08090A0B, 0x0C0D0E0F, 0x00010203, 0x04050607))
+R"w2c_template(      simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7))
 )w2c_template"
 R"w2c_template(#define v128_u32x4_trunc_sat_f64x2_zero(a)      \
 )w2c_template"
@@ -493,7 +493,7 @@ R"w2c_template(  simde_wasm_i8x16_swizzle(                     \
 )w2c_template"
 R"w2c_template(      simde_wasm_u32x4_trunc_sat_f64x2_zero(a), \
 )w2c_template"
-R"w2c_template(      simde_wasm_i32x4_const(0x08090A0B, 0x0C0D0E0F, 0x00010203, 0x04050607))
+R"w2c_template(      simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7))
 )w2c_template"
 R"w2c_template(#define v128_i16x8_narrow_i32x4(a,b) simde_wasm_i16x8_narrow_i32x4(b,a)
 )w2c_template"
@@ -509,7 +509,7 @@ R"w2c_template(  simde_wasm_f64x2_promote_low_f32x4(simde_wasm_i8x16_swizzle( \
 )w2c_template"
 R"w2c_template(      a,                                                       \
 )w2c_template"
-R"w2c_template(      simde_wasm_i32x4_const(0x08090A0B, 0x0C0D0E0F, 0x00010203, 0x04050607)))
+R"w2c_template(      simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7)))
 )w2c_template"
 R"w2c_template(#define v128_f32x4_demote_f64x2_zero(a)      \
 )w2c_template"
@@ -517,7 +517,7 @@ R"w2c_template(  simde_wasm_i8x16_swizzle(                  \
 )w2c_template"
 R"w2c_template(      simde_wasm_f32x4_demote_f64x2_zero(a), \
 )w2c_template"
-R"w2c_template(      simde_wasm_i32x4_const(0x08090A0B, 0x0C0D0E0F, 0x00010203, 0x04050607))
+R"w2c_template(      simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7))
 )w2c_template"
 R"w2c_template(#define v128_f64x2_convert_low_i32x4(a)                        \
 )w2c_template"
@@ -525,7 +525,7 @@ R"w2c_template(  simde_wasm_f64x2_convert_low_i32x4(simde_wasm_i8x16_swizzle( \
 )w2c_template"
 R"w2c_template(      a,                                                       \
 )w2c_template"
-R"w2c_template(      simde_wasm_i32x4_const(0x08090A0B, 0x0C0D0E0F, 0x00010203, 0x04050607)))
+R"w2c_template(      simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7)))
 )w2c_template"
 R"w2c_template(#define v128_f64x2_convert_low_u32x4(a)                        \
 )w2c_template"
@@ -533,11 +533,11 @@ R"w2c_template(  simde_wasm_f64x2_convert_low_u32x4(simde_wasm_i8x16_swizzle( \
 )w2c_template"
 R"w2c_template(      a,                                                       \
 )w2c_template"
-R"w2c_template(      simde_wasm_i32x4_const(0x08090A0B, 0x0C0D0E0F, 0x00010203, 0x04050607)))
+R"w2c_template(      simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7)))
 )w2c_template"
 R"w2c_template(#else
 )w2c_template"
-R"w2c_template(#define v128_const simde_wasm_i32x4_const
+R"w2c_template(#define v128_const simde_wasm_i8x16_const
 )w2c_template"
 R"w2c_template(#define v128_i8x16_extract_lane simde_wasm_i8x16_extract_lane
 )w2c_template"

@@ -1297,9 +1297,11 @@ void CWriter::Write(const Const& const_) {
       break;
     }
     case Type::V128: {
-      Writef("v128_const(0x%08x, 0x%08x, 0x%08x, 0x%08x)",
-             const_.vec128().u32(0), const_.vec128().u32(1),
-             const_.vec128().u32(2), const_.vec128().u32(3));
+      Writef("v128_const(0x%02x", const_.vec128().u8(0));
+      for (int i = 1; i < 16; i++) {
+        Writef(", 0x%02x", const_.vec128().u8(i));
+      }
+      Write(")");
       break;
     }
 
