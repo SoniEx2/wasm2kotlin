@@ -13,6 +13,18 @@
 #include "wasm-rt-impl.h"
 #include "wasm-rt-exceptions.h"
 
+// like is_equal_TYPE below, always use unsigned for these
+#define v128_i8x16_extract_lane simde_wasm_u8x16_extract_lane
+#define v128_u8x16_extract_lane simde_wasm_u8x16_extract_lane
+#define v128_i16x8_extract_lane simde_wasm_u16x8_extract_lane
+#define v128_u16x8_extract_lane simde_wasm_u16x8_extract_lane
+#define v128_i32x4_extract_lane simde_wasm_u32x4_extract_lane
+#define v128_u32x4_extract_lane simde_wasm_u32x4_extract_lane
+#define v128_i64x2_extract_lane simde_wasm_u64x2_extract_lane
+#define v128_u64x2_extract_lane simde_wasm_u64x2_extract_lane
+#define v128_f32x4_extract_lane simde_wasm_f32x4_extract_lane
+#define v128_f64x2_extract_lane simde_wasm_f64x2_extract_lane
+
 static int g_tests_run;
 static int g_tests_passed;
 
