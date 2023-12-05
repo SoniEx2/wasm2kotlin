@@ -6256,7 +6256,7 @@ simde_wasm_i8x16_shuffle (
         a, b, \
         c0, c1,  c2,  c3,  c4,  c5,  c6,  c7, \
         c8, c9, c10, c11, c12, c13, c14, c15)
-#elif defined(SIMDE_SHUFFLE_VECTOR_)
+#elif defined(SIMDE_SHUFFLE_VECTOR_) && !WABT_BIG_ENDIAN
   #define \
     simde_wasm_i8x16_shuffle( \
         a, b, \
@@ -6309,7 +6309,7 @@ simde_wasm_i16x8_shuffle (
     wasm_i16x8_shuffle( \
         a, b, \
         c0, c1,  c2,  c3,  c4,  c5,  c6,  c7)
-#elif defined(SIMDE_SHUFFLE_VECTOR_)
+#elif defined(SIMDE_SHUFFLE_VECTOR_) && !WABT_BIG_ENDIAN
   #define \
     simde_wasm_i16x8_shuffle( \
         a, b, \
@@ -6354,7 +6354,7 @@ simde_wasm_i32x4_shuffle (
     wasm_i32x4_shuffle( \
         a, b, \
         c0, c1,  c2,  c3)
-#elif defined(SIMDE_SHUFFLE_VECTOR_)
+#elif defined(SIMDE_SHUFFLE_VECTOR_) && !WABT_BIG_ENDIAN
   #define \
     simde_wasm_i32x4_shuffle( \
         a, b, \
@@ -6397,7 +6397,7 @@ simde_wasm_i64x2_shuffle (
     wasm_i64x2_shuffle( \
         a, b, \
         c0, c1)
-#elif defined(SIMDE_SHUFFLE_VECTOR_)
+#elif defined(SIMDE_SHUFFLE_VECTOR_) && !WABT_BIG_ENDIAN
   #define \
     simde_wasm_i64x2_shuffle( \
         a, b, \
@@ -6486,7 +6486,7 @@ simde_wasm_i8x16_narrow_i16x8 (simde_v128_t a, simde_v128_t b) {
       r_.altivec_i8 = vec_packs(a_.altivec_i16, b_.altivec_i16);
     #elif defined(SIMDE_X86_SSE2_NATIVE)
       r_.sse_m128i = _mm_packs_epi16(a_.sse_m128i, b_.sse_m128i);
-    #elif defined(SIMDE_CONVERT_VECTOR_) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       int16_t SIMDE_VECTOR(32) v = SIMDE_SHUFFLE_VECTOR_(16, 32, a_.i16, b_.i16, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
       const int16_t SIMDE_VECTOR(32) min = { INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN, INT8_MIN };
       const int16_t SIMDE_VECTOR(32) max = { INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX, INT8_MAX };
@@ -6533,7 +6533,7 @@ simde_wasm_i16x8_narrow_i32x4 (simde_v128_t a, simde_v128_t b) {
       r_.altivec_i16 = vec_packs(a_.altivec_i32, b_.altivec_i32);
     #elif defined(SIMDE_X86_SSE2_NATIVE)
       r_.sse_m128i = _mm_packs_epi32(a_.sse_m128i, b_.sse_m128i);
-    #elif defined(SIMDE_CONVERT_VECTOR_) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       int32_t SIMDE_VECTOR(32) v = SIMDE_SHUFFLE_VECTOR_(32, 32, a_.i32, b_.i32, 0, 1, 2, 3, 4, 5, 6, 7);
       const int32_t SIMDE_VECTOR(32) min = { INT16_MIN, INT16_MIN, INT16_MIN, INT16_MIN, INT16_MIN, INT16_MIN, INT16_MIN, INT16_MIN };
       const int32_t SIMDE_VECTOR(32) max = { INT16_MAX, INT16_MAX, INT16_MAX, INT16_MAX, INT16_MAX, INT16_MAX, INT16_MAX, INT16_MAX };
@@ -6588,7 +6588,7 @@ simde_wasm_u8x16_narrow_i16x8 (simde_v128_t a, simde_v128_t b) {
       r_.sse_m128i = _mm_packus_epi16(a_.sse_m128i, b_.sse_m128i);
     #elif defined(SIMDE_POWER_ALTIVEC_P6_NATIVE)
       r_.altivec_u8 = vec_packsu(a_.altivec_i16, b_.altivec_i16);
-    #elif defined(SIMDE_CONVERT_VECTOR_) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && defined(SIMDE_VECTOR_SUBSCRIPT_SCALAR)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && defined(SIMDE_VECTOR_SUBSCRIPT_SCALAR) && !WABT_BIG_ENDIAN
       int16_t v SIMDE_VECTOR(32) = SIMDE_SHUFFLE_VECTOR_(16, 32, a_.i16, b_.i16, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
       v &= ~(v >> 15);
@@ -6646,7 +6646,7 @@ simde_wasm_u16x8_narrow_i32x4 (simde_v128_t a, simde_v128_t b) {
         );
     #elif defined(SIMDE_POWER_ALTIVEC_P6_NATIVE)
       r_.altivec_u16 = vec_packsu(a_.altivec_i32, b_.altivec_i32);
-    #elif defined(SIMDE_CONVERT_VECTOR_) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && defined(SIMDE_VECTOR_SUBSCRIPT_SCALAR)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && defined(SIMDE_VECTOR_SUBSCRIPT_SCALAR) && !WABT_BIG_ENDIAN
       int32_t v SIMDE_VECTOR(32) = SIMDE_SHUFFLE_VECTOR_(32, 32, a_.i32, b_.i32, 0, 1, 2, 3, 4, 5, 6, 7);
 
       v &= ~(v >> 31);
@@ -6704,7 +6704,7 @@ simde_wasm_f32x4_demote_f64x2_zero (simde_v128_t a) {
         };
         r_.altivec_f32 = vec_perm(r_.altivec_f32, HEDLEY_REINTERPRET_CAST(SIMDE_POWER_ALTIVEC_VECTOR(float), vec_splat_s32(0)), perm);
       #endif
-    #elif HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && HEDLEY_HAS_BUILTIN(__builtin_convertvector)
+    #elif HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && HEDLEY_HAS_BUILTIN(__builtin_convertvector) && !WABT_BIG_ENDIAN
       float __attribute__((__vector_size__(8))) z = { 0.0f, 0.0f };
       r_.f32 = __builtin_shufflevector(__builtin_convertvector(a_.f64, __typeof__(z)), z, 0, 1, 2, 3);
     #else
@@ -6983,7 +6983,7 @@ simde_wasm_f64x2_promote_low_f32x4 (simde_v128_t a) {
       r_.neon_f64 = vcvt_f64_f32(vget_low_f32(a_.neon_f32));
     #elif defined(SIMDE_POWER_ALTIVEC_P7_NATIVE)
       r_.altivec_f64 = vec_unpackh(a_.altivec_f32);
-    #elif HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && HEDLEY_HAS_BUILTIN(__builtin_convertvector)
+    #elif HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && HEDLEY_HAS_BUILTIN(__builtin_convertvector) && !WABT_BIG_ENDIAN
       r_.f64 = __builtin_convertvector(__builtin_shufflevector(a_.f32, a_.f32, 0, 1), __typeof__(r_.f64));
     #else
       SIMDE_LANE(r_, f64, 0) = HEDLEY_STATIC_CAST(simde_float64, SIMDE_LANE(a_, f32, 0));
@@ -7276,7 +7276,7 @@ simde_wasm_i16x8_extmul_low_i8x16 (simde_v128_t a, simde_v128_t b) {
           _mm_srai_epi16(_mm_unpacklo_epi8(a_.sse_m128i, a_.sse_m128i), 8),
           _mm_srai_epi16(_mm_unpacklo_epi8(b_.sse_m128i, b_.sse_m128i), 8)
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.i16 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.i8, a_.i8, 0, 1, 2, 3, 4, 5, 6, 7),
@@ -7339,7 +7339,7 @@ simde_wasm_i32x4_extmul_low_i16x8 (simde_v128_t a, simde_v128_t b) {
           _mm_mullo_epi16(a_.sse_m128i, b_.sse_m128i),
           _mm_mulhi_epi16(a_.sse_m128i, b_.sse_m128i)
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.i32 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.i16, a_.i16, 0, 1, 2, 3),
@@ -7400,7 +7400,7 @@ simde_wasm_i64x2_extmul_low_i32x4 (simde_v128_t a, simde_v128_t b) {
           _mm_shuffle_epi32(a_.sse_m128i, _MM_SHUFFLE(1, 1, 0, 0)),
           _mm_shuffle_epi32(b_.sse_m128i, _MM_SHUFFLE(1, 1, 0, 0))
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.i64 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.i32, a_.i32, 0, 1),
@@ -7454,7 +7454,7 @@ simde_wasm_u16x8_extmul_low_u8x16 (simde_v128_t a, simde_v128_t b) {
       #endif
 
       r_.altivec_u16 = vec_mule(ashuf, bshuf);
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.u16 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.u8, a_.u8, 0, 1, 2, 3, 4, 5, 6, 7),
@@ -7517,7 +7517,7 @@ simde_wasm_u32x4_extmul_low_u16x8 (simde_v128_t a, simde_v128_t b) {
           _mm_mullo_epi16(a_.sse_m128i, b_.sse_m128i),
           _mm_mulhi_epu16(a_.sse_m128i, b_.sse_m128i)
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.u32 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.u16, a_.u16, 0, 1, 2, 3),
@@ -7578,7 +7578,7 @@ simde_wasm_u64x2_extmul_low_u32x4 (simde_v128_t a, simde_v128_t b) {
           _mm_shuffle_epi32(a_.sse_m128i, _MM_SHUFFLE(1, 1, 0, 0)),
           _mm_shuffle_epi32(b_.sse_m128i, _MM_SHUFFLE(1, 1, 0, 0))
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.u64 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.u32, a_.u32, 0, 1),
@@ -7632,7 +7632,7 @@ simde_wasm_i16x8_extmul_high_i8x16 (simde_v128_t a, simde_v128_t b) {
           _mm_srai_epi16(_mm_unpackhi_epi8(a_.sse_m128i, a_.sse_m128i), 8),
           _mm_srai_epi16(_mm_unpackhi_epi8(b_.sse_m128i, b_.sse_m128i), 8)
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.i16 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.i8, a_.i8, 8, 9, 10, 11, 12, 13, 14, 15),
@@ -7684,7 +7684,7 @@ simde_wasm_i32x4_extmul_high_i16x8 (simde_v128_t a, simde_v128_t b) {
           _mm_mullo_epi16(a_.sse_m128i, b_.sse_m128i),
           _mm_mulhi_epi16(a_.sse_m128i, b_.sse_m128i)
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.i32 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.i16, a_.i16, 4, 5, 6, 7),
@@ -7747,7 +7747,7 @@ simde_wasm_i64x2_extmul_high_i32x4 (simde_v128_t a, simde_v128_t b) {
           _mm_shuffle_epi32(a_.sse_m128i, _MM_SHUFFLE(3, 3, 2, 2)),
           _mm_shuffle_epi32(b_.sse_m128i, _MM_SHUFFLE(3, 3, 2, 2))
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.i64 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.i32, a_.i32, 2, 3),
@@ -7793,7 +7793,7 @@ simde_wasm_u16x8_extmul_high_u8x16 (simde_v128_t a, simde_v128_t b) {
           vec_mergel(a_.altivec_u8, a_.altivec_u8),
           vec_mergel(b_.altivec_u8, b_.altivec_u8)
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.u16 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.u8, a_.u8, 8, 9, 10, 11, 12, 13, 14, 15),
@@ -7845,7 +7845,7 @@ simde_wasm_u32x4_extmul_high_u16x8 (simde_v128_t a, simde_v128_t b) {
           _mm_mullo_epi16(a_.sse_m128i, b_.sse_m128i),
           _mm_mulhi_epu16(a_.sse_m128i, b_.sse_m128i)
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.u32 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.u16, a_.u16, 4, 5, 6, 7),
@@ -7897,7 +7897,7 @@ simde_wasm_u64x2_extmul_high_u32x4 (simde_v128_t a, simde_v128_t b) {
           _mm_shuffle_epi32(a_.sse_m128i, _MM_SHUFFLE(3, 3, 2, 2)),
           _mm_shuffle_epi32(b_.sse_m128i, _MM_SHUFFLE(3, 3, 2, 2))
         );
-    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector)
+    #elif defined(SIMDE_VECTOR_SUBSCRIPT_OPS) && HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && !WABT_BIG_ENDIAN
       r_.u64 =
         __builtin_convertvector(
           __builtin_shufflevector(a_.u32, a_.u32, 2, 3),
@@ -8552,7 +8552,7 @@ simde_wasm_f64x2_convert_low_i32x4 (simde_v128_t a) {
       a_ = simde_v128_to_private(a),
       r_;
 
-    #if HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && HEDLEY_HAS_BUILTIN(__builtin_convertvector)
+    #if HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && HEDLEY_HAS_BUILTIN(__builtin_convertvector) && !WABT_BIG_ENDIAN
       r_.f64 = __builtin_convertvector(__builtin_shufflevector(a_.i32, a_.i32, 0, 1), __typeof__(r_.f64));
     #else
       SIMDE_VECTORIZE
@@ -8578,7 +8578,7 @@ simde_wasm_f64x2_convert_low_u32x4 (simde_v128_t a) {
       a_ = simde_v128_to_private(a),
       r_;
 
-    #if HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && HEDLEY_HAS_BUILTIN(__builtin_convertvector)
+    #if HEDLEY_HAS_BUILTIN(__builtin_shufflevector) && HEDLEY_HAS_BUILTIN(__builtin_convertvector) && !WABT_BIG_ENDIAN
       r_.f64 = __builtin_convertvector(__builtin_shufflevector(a_.u32, a_.u32, 0, 1), __typeof__(r_.f64));
     #else
       SIMDE_VECTORIZE
