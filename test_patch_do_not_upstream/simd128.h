@@ -33,6 +33,9 @@
 // lanewise operations (r[lane] = a[lane] op b[lane]) don't need to use these
 // also, splat doesn't need these either
 #if WABT_BIG_ENDIAN
+#if !defined(SIMDE_NO_NATIVE)
+#error "WABT_BIG_ENDIAN requires SIMDE_NO_NATIVE"
+#endif
 #define SIMDE_LANE(v, t, x) (v).t[sizeof((v).t)/sizeof((v).t[0]) - 1 - (x)]
 #else
 #define SIMDE_LANE(v, t, x) (v).t[x]
@@ -6746,7 +6749,7 @@ simde_wasm_i16x8_extend_low_i8x16 (simde_v128_t a) {
           vec_splats(HEDLEY_STATIC_CAST(unsigned short, 8)
         )
       );
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const int8_t v SIMDE_VECTOR(8) = {
         a_.i8[0], a_.i8[1], a_.i8[2], a_.i8[3],
         a_.i8[4], a_.i8[5], a_.i8[6], a_.i8[7]
@@ -6788,7 +6791,7 @@ simde_wasm_i32x4_extend_low_i16x8 (simde_v128_t a) {
         vec_sra(HEDLEY_REINTERPRET_CAST(SIMDE_POWER_ALTIVEC_VECTOR(int), vec_mergeh(a_.altivec_i16, a_.altivec_i16)),
         vec_splats(HEDLEY_STATIC_CAST(unsigned int, 16))
       );
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const int16_t v SIMDE_VECTOR(8) = { a_.i16[0], a_.i16[1], a_.i16[2], a_.i16[3] };
 
       SIMDE_CONVERT_VECTOR_(r_.i32, v);
@@ -6836,7 +6839,7 @@ simde_wasm_i64x2_extend_low_i32x4 (simde_v128_t a) {
             vec_cmpgt(vec_splat_s32(0), a_.altivec_i32)
           )
         );
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const int32_t v SIMDE_VECTOR(8) = { a_.i32[0], a_.i32[1] };
 
       SIMDE_CONVERT_VECTOR_(r_.i64, v);
@@ -6872,7 +6875,7 @@ simde_wasm_u16x8_extend_low_u8x16 (simde_v128_t a) {
       r_.sse_m128i = _mm_srli_epi16(_mm_unpacklo_epi8(a_.sse_m128i, a_.sse_m128i), 8);
     #elif defined(SIMDE_POWER_ALTIVEC_P6_NATIVE)
       r_.altivec_i8 = vec_mergeh(a_.altivec_i8, vec_splat_s8(0));
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const uint8_t v SIMDE_VECTOR(8) = {
         a_.u8[0], a_.u8[1], a_.u8[2], a_.u8[3],
         a_.u8[4], a_.u8[5], a_.u8[6], a_.u8[7]
@@ -6911,7 +6914,7 @@ simde_wasm_u32x4_extend_low_u16x8 (simde_v128_t a) {
       r_.sse_m128i = _mm_srli_epi32(_mm_unpacklo_epi16(a_.sse_m128i, a_.sse_m128i), 16);
     #elif defined(SIMDE_POWER_ALTIVEC_P6_NATIVE)
       r_.altivec_i16 = vec_mergeh(a_.altivec_i16, vec_splat_s16(0));
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const uint16_t v SIMDE_VECTOR(8) = { a_.u16[0], a_.u16[1], a_.u16[2], a_.u16[3] };
 
       SIMDE_CONVERT_VECTOR_(r_.i32, v);
@@ -6947,7 +6950,7 @@ simde_wasm_u64x2_extend_low_u32x4 (simde_v128_t a) {
       r_.sse_m128i =_mm_unpacklo_epi32(a_.sse_m128i, _mm_setzero_si128());
     #elif defined(SIMDE_POWER_ALTIVEC_P6_NATIVE)
       r_.altivec_i32 = vec_mergeh(a_.altivec_i32, vec_splat_s32(0));
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const uint32_t v SIMDE_VECTOR(8) = { a_.u32[0], a_.u32[1] };
 
       SIMDE_CONVERT_VECTOR_(r_.u64, v);
@@ -7020,7 +7023,7 @@ simde_wasm_i16x8_extend_high_i8x16 (simde_v128_t a) {
           vec_splats(HEDLEY_STATIC_CAST(unsigned short, 8)
         )
       );
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const int8_t v SIMDE_VECTOR(8) = {
         a_.i8[ 8], a_.i8[ 9], a_.i8[10], a_.i8[11],
         a_.i8[12], a_.i8[13], a_.i8[14], a_.i8[15]
@@ -7062,7 +7065,7 @@ simde_wasm_i32x4_extend_high_i16x8 (simde_v128_t a) {
         vec_sra(HEDLEY_REINTERPRET_CAST(SIMDE_POWER_ALTIVEC_VECTOR(int), vec_mergel(a_.altivec_i16, a_.altivec_i16)),
         vec_splats(HEDLEY_STATIC_CAST(unsigned int, 16))
       );
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const int16_t v SIMDE_VECTOR(8) = { a_.i16[4], a_.i16[5], a_.i16[6], a_.i16[7] };
 
       SIMDE_CONVERT_VECTOR_(r_.i32, v);
@@ -7110,7 +7113,7 @@ simde_wasm_i64x2_extend_high_i32x4 (simde_v128_t a) {
             vec_cmpgt(vec_splat_s32(0), a_.altivec_i32)
           )
         );
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const int32_t v SIMDE_VECTOR(8) = { a_.i32[2], a_.i32[3] };
 
       SIMDE_CONVERT_VECTOR_(r_.i64, v);
@@ -7146,7 +7149,7 @@ simde_wasm_u16x8_extend_high_u8x16 (simde_v128_t a) {
       r_.sse_m128i = _mm_srli_epi16(_mm_unpackhi_epi8(a_.sse_m128i, a_.sse_m128i), 8);
     #elif defined(SIMDE_POWER_ALTIVEC_P6_NATIVE)
       r_.altivec_i8 = vec_mergel(a_.altivec_i8, vec_splat_s8(0));
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const uint8_t v SIMDE_VECTOR(8) = {
         a_.u8[ 8], a_.u8[ 9], a_.u8[10], a_.u8[11],
         a_.u8[12], a_.u8[13], a_.u8[14], a_.u8[15]
@@ -7185,7 +7188,7 @@ simde_wasm_u32x4_extend_high_u16x8 (simde_v128_t a) {
       r_.sse_m128i = _mm_srli_epi32(_mm_unpackhi_epi16(a_.sse_m128i, a_.sse_m128i), 16);
     #elif defined(SIMDE_POWER_ALTIVEC_P6_NATIVE)
       r_.altivec_i16 = vec_mergel(a_.altivec_i16, vec_splat_s16(0));
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const uint16_t v SIMDE_VECTOR(8) = { a_.u16[4], a_.u16[5], a_.u16[6], a_.u16[7] };
 
       SIMDE_CONVERT_VECTOR_(r_.u32, v);
@@ -7221,7 +7224,7 @@ simde_wasm_u64x2_extend_high_u32x4 (simde_v128_t a) {
       r_.sse_m128i =_mm_unpackhi_epi32(a_.sse_m128i, _mm_setzero_si128());
     #elif defined(SIMDE_POWER_ALTIVEC_P6_NATIVE)
       r_.altivec_i32 = vec_mergel(a_.altivec_i32, vec_splat_s32(0));
-    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762)
+    #elif defined(SIMDE_CONVERT_VECTOR_) && !defined(SIMDE_BUG_GCC_100762) && !WABT_BIG_ENDIAN
       const uint32_t v SIMDE_VECTOR(8) = { a_.u32[2], a_.u32[3] };
 
       SIMDE_CONVERT_VECTOR_(r_.u64, v);
