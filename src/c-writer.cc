@@ -1970,6 +1970,9 @@ void CWriter::WriteHeaderIncludes() {
 }
 
 void CWriter::WriteV128Decl() {
+  Write("#if WABT_BIG_ENDIAN", Newline());
+  Write("#define SIMDE_WASM_REVERSE_LANE_ORDER", Newline());
+  Write("#endif", Newline());
   Write("#include <simde/wasm/simd128.h>", Newline(), Newline());
   Write("#ifndef WASM_RT_SIMD_TYPE_DEFINED", Newline(),
         "#define WASM_RT_SIMD_TYPE_DEFINED", Newline(),
