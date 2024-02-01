@@ -192,6 +192,12 @@ jobs:
       fail-fast: false
       matrix:
         arch: [s390x]
+    services: # still faster on debian...
+      distcc:
+        image: debian:latest
+        options: --health-cmd distccmon-text --health-interval 5s --health-start-period 5m debian:latest bash -c "apt-get update && apt-get install -y g++-s390x-linux-gnu distcc && distccd --daemon --no-detach"
+        ports:
+          - 3632:3632
     steps:
     - uses: actions/setup-python@v1
       with:
@@ -209,6 +215,12 @@ jobs:
       run: sudo apt-get install ninja-build
     - name: install the toolchain
       run: sudo apt-get install g++-${{matrix.arch}}-linux-gnu
+    - name: install distcc
+      run: sudo apt-get install distcc
+    - name: mkdir distcc symlinks
+      run: sudo mkdir -p /opt/bin/distcc_symlinks
+    - name: distcc symlink
+      run: sudo ln -s /usr/bin/distcc /opt/bin/distcc_symlinks/${{matrix.arch}}-linux-gnu-gcc # only CC is needed
     - name: mkdir
       run: mkdir -p out
     - name: cmake
