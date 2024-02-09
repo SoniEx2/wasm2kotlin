@@ -201,6 +201,7 @@ jobs:
         #if: ${{ matrix.arch == 's390x' }} # unfortunately can't make this conditional...
     env:
       QEMU_LD_PREFIX: /usr/${{matrix.arch}}-linux-gnu/
+      WASM2C_CFLAGS: -DSIMDE_NO_NATIVE
     steps:
     - uses: actions/setup-python@v1
       with:
