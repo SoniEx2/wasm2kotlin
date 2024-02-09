@@ -191,13 +191,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [s390x]
+        arch: [s390x, aarch64]
     services: # still faster on debian...
       distcc:
         image: debian:latest
         options: --health-cmd distccmon-text --health-interval 5s --health-start-period 5m debian:latest bash -c "apt-get update && apt-get install -y g++-s390x-linux-gnu distcc && distccd --daemon --no-detach"
         ports:
           - 3632:3632
+        #if: ${{ matrix.arch == 's390x' }} # unfortunately can't make this conditional...
     env:
       QEMU_LD_PREFIX: /usr/${{matrix.arch}}-linux-gnu/
     steps:
@@ -208,7 +209,6 @@ jobs:
       with:
         submodules: true
     - name: Set up QEMU
-      if: ${{ matrix.arch != 'i386' }}
       uses: docker/setup-qemu-action@v2
       with:
         platforms: ${{matrix.arch}}
@@ -223,6 +223,7 @@ jobs:
       run: sudo mkdir -p /opt/bin/distcc_symlinks
     - name: distcc symlink
       run: sudo ln -s /usr/bin/distcc /opt/bin/distcc_symlinks/${{matrix.arch}}-linux-gnu-gcc # only CC is needed
+      if: ${{ matrix.arch == 's390x' }}
     - name: cmake
       run: cmake -S . -B out -G Ninja -DCMAKE_TOOLCHAIN_FILE=../scripts/TC-${{matrix.arch}}.cmake -DWITH_WASI=ON -DWERROR=OFF -Werror=dev -Wno-deprecated
     - name: build
