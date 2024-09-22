@@ -225,6 +225,8 @@ bool Store::HasValueType(Ref ref, ValueType type) const {
     case ValueType::FuncRef:
       return obj->kind() == ObjectKind::DefinedFunc ||
              obj->kind() == ObjectKind::HostFunc;
+    case ValueType::ExnRef:
+      return obj->kind() == ObjectKind::Exception;
     default:
       return false;
   }
@@ -1943,6 +1945,14 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
                          exceptions_[exceptions_.size() - exn_index - 1]};
       return DoThrow(exn);
     }
+    case O::ThrowRef: {
+      Ref ref = Pop<Ref>();
+      assert(store_.HasValueType(ref, ValueType::ExnRef));
+      // FIXME better error message?
+      TRAP_IF(ref == Ref::Null, "expected exnref, got null");
+      Exception::Ptr exn = store_.UnsafeGet<Exception>(ref);
+      return DoThrow(exn);
+    }
 
     // The following opcodes are either never generated or should never be
     // executed.
@@ -1957,6 +1967,7 @@ RunResult Thread::StepInternal(Trap::Ptr* out_trap) {
 
     case O::CallRef:
     case O::Try:
+    case O::TryTable:
     case O::Catch:
     case O::CatchAll:
     case O::Delegate:
@@ -2735,6 +2746,7 @@ std::string Thread::TraceSource::Pick(Index index, Instr instr) {
 
     case ValueType::FuncRef:    reftype = "funcref"; break;
     case ValueType::ExternRef:  reftype = "externref"; break;
+    case ValueType::ExnRef:  reftype = "exnref"; break;
 
     default:
       WABT_UNREACHABLE;

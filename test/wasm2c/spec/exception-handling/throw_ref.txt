@@ -1,0 +1,3 @@
+;;; TOOL: run-spec-wasm2c
+;;; STDIN_FILE: third_party/testsuite/proposals/exception-handling/throw_ref.wast
+;;; ARGS*: --enable-exceptions

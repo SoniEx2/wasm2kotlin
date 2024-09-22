@@ -483,9 +483,10 @@ class CWriter {
   void Write(const AtomicRmwExpr& expr);
   void Write(const AtomicRmwCmpxchgExpr& expr);
 
-  size_t BeginTry(const TryExpr& tryexpr);
+  size_t BeginTry(const Block& block);
   void WriteTryCatch(const TryExpr& tryexpr);
   void WriteTryDelegate(const TryExpr& tryexpr);
+  void Write(const TryTableExpr& try_table_expr);
   void Write(const Catch& c);
   void WriteThrow();
 
@@ -3281,27 +3282,27 @@ void CWriter::Write(const Block& block) {
   PushTypes(block.decl.sig.result_types);
 }
 
-size_t CWriter::BeginTry(const TryExpr& tryexpr) {
+size_t CWriter::BeginTry(const Block& block) {
   func_includes_.insert("exceptions");
-  Write(OpenBrace()); /* beginning of try-catch */
-  const std::string tlabel = DefineLabelName(tryexpr.block.label);
+  Write(OpenBrace()); /* beginning of try-catch or try_table */
+  const std::string tlabel = DefineLabelName(block.label);
   Write("WASM_RT_UNWIND_TARGET *", tlabel,
         "_outer_target = wasm_rt_get_unwind_target();", Newline());
   Write("WASM_RT_UNWIND_TARGET ", tlabel, "_unwind_target;", Newline());
   Write("if (!wasm_rt_try(", tlabel, "_unwind_target)) ");
-  Write(OpenBrace()); /* beginning of try block */
-  DropTypes(tryexpr.block.decl.GetNumParams());
+  Write(OpenBrace()); /* beginning of try or try_table block */
+  DropTypes(block.decl.GetNumParams());
   const size_t mark = MarkTypeStack();
-  PushLabel(LabelType::Try, tryexpr.block.label, tryexpr.block.decl.sig);
-  PushTypes(tryexpr.block.decl.sig.param_types);
+  PushLabel(LabelType::Try, block.label, block.decl.sig);
+  PushTypes(block.decl.sig.param_types);
   Write("wasm_rt_set_unwind_target(&", tlabel, "_unwind_target);", Newline());
   PushTryCatch(tlabel);
-  Write(tryexpr.block.exprs);
+  Write(block.exprs);
   ResetTypeStack(mark);
   Write("wasm_rt_set_unwind_target(", tlabel, "_outer_target);", Newline());
-  Write(CloseBrace());          /* end of try block */
+  Write(CloseBrace());          /* end of try or try_table block */
   Write(" else ", OpenBrace()); /* beginning of catch blocks or delegate */
-  assert(label_stack_.back().name == tryexpr.block.label);
+  assert(label_stack_.back().name == block.label);
   assert(label_stack_.back().label_type == LabelType::Try);
   label_stack_.back().label_type = LabelType::Catch;
   if (try_catch_stack_.back().used) {
@@ -3312,7 +3313,7 @@ size_t CWriter::BeginTry(const TryExpr& tryexpr) {
 }
 
 void CWriter::WriteTryCatch(const TryExpr& tryexpr) {
-  const size_t mark = BeginTry(tryexpr);
+  const size_t mark = BeginTry(tryexpr.block);
 
   /* exception has been thrown -- do we catch it? */
 
@@ -3410,7 +3411,7 @@ void CWriter::PopTryCatch() {
 }
 
 void CWriter::WriteTryDelegate(const TryExpr& tryexpr) {
-  const size_t mark = BeginTry(tryexpr);
+  const size_t mark = BeginTry(tryexpr.block);
 
   /* exception has been thrown -- where do we delegate it? */
 
@@ -3455,6 +3456,12 @@ void CWriter::WriteTryDelegate(const TryExpr& tryexpr) {
   Write(LabelDecl(GetLocalName(tryexpr.block.label, true)));
   PopLabel();
   PushTypes(tryexpr.block.decl.sig.result_types);
+}
+
+void CWriter::Write(const TryTableExpr& try_table_expr) {
+  //const size_t mark = BeginTry(try_table_expr.block);
+
+  assert(false && "NYI");
 }
 
 void CWriter::Write(const ExprList& exprs) {
@@ -3999,6 +4006,15 @@ void CWriter::Write(const ExprList& exprs) {
         }
       } break;
 
+      case ExprType::TryTable: {
+        const TryTableExpr& try_table = *cast<TryTableExpr>(&expr);
+        if (try_table.catches.empty()) {
+          Write(try_table.block);
+        } else {
+          Write(try_table);
+        }
+      } break;
+
       case ExprType::AtomicLoad: {
         Write(*cast<AtomicLoadExpr>(&expr));
         break;
@@ -4123,6 +4139,7 @@ void CWriter::Write(const ExprList& exprs) {
       case ExprType::AtomicWait:
       case ExprType::AtomicNotify:
       case ExprType::CallRef:
+      case ExprType::ThrowRef:
         UNIMPLEMENTED("...");
         break;
     }

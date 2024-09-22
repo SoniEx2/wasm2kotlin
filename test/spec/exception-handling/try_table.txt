@@ -1,0 +1,3 @@
+;;; TOOL: run-interp-spec
+;;; STDIN_FILE: third_party/testsuite/proposals/exception-handling/try_table.wast
+;;; ARGS*: --enable-exceptions --enable-tail-call
