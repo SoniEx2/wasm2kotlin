@@ -3459,7 +3459,7 @@ void CWriter::WriteTryDelegate(const TryExpr& tryexpr) {
 }
 
 void CWriter::Write(const TryTableExpr& try_table_expr) {
-  //const size_t mark = BeginTry(try_table_expr.block);
+  // const size_t mark = BeginTry(try_table_expr.block);
 
   assert(false && "NYI");
 }

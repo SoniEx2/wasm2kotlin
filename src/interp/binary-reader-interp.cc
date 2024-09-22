@@ -1520,7 +1520,6 @@ Result BinaryReaderInterp::OnThrowRefExpr() {
   return Result::Ok;
 }
 
-
 Result BinaryReaderInterp::OnRethrowExpr(Index depth) {
   Index catch_depth;
   CHECK_RESULT(validator_.OnRethrow(GetLocation(), Var(depth, GetLocation())));
@@ -1552,61 +1551,64 @@ Result BinaryReaderInterp::OnTryExpr(Type sig_type) {
   return Result::Ok;
 }
 
-Result BinaryReaderInterp::OnTryTableExpr(Type sig_type, const RawCatchVector& catches) {
+Result BinaryReaderInterp::OnTryTableExpr(Type sig_type,
+                                          const RawCatchVector& catches) {
   CHECK_RESULT(validator_.BeginTryTable(GetLocation()));
 
   assert(false && "NYI");
 
   //// from loop
-  //PushLabel(LabelKind::Block, istream_.end());
-  //return Result::Ok;
+  // PushLabel(LabelKind::Block, istream_.end());
+  // return Result::Ok;
 
   //// from brtable
-  //Index drop_count, keep_count, catch_drop_count;
-  //istream_.Emit(Opcode::BrTable, num_targets);
+  // Index drop_count, keep_count, catch_drop_count;
+  // istream_.Emit(Opcode::BrTable, num_targets);
 
-  //for (Index i = 0; i < num_targets; ++i) {
-  //  Index depth = target_depths[i];
-  //  CHECK_RESULT(
-  //      validator_.OnBrTableTarget(GetLocation(), Var(depth, GetLocation())));
-  //  CHECK_RESULT(GetBrDropKeepCount(depth, &drop_count, &keep_count));
-  //  CHECK_RESULT(validator_.GetCatchCount(depth, &catch_drop_count));
-  //  // Emit DropKeep directly (instead of using EmitDropKeep) so the
-  //  // instruction has a fixed size. Same for CatchDrop as well.
-  //  istream_.Emit(Opcode::InterpDropKeep, drop_count, keep_count);
-  //  istream_.Emit(Opcode::InterpCatchDrop, catch_drop_count);
-  //  EmitBr(depth, 0, 0, 0);
-  //}
-  //CHECK_RESULT(validator_.OnBrTableTarget(
-  //    GetLocation(), Var(default_target_depth, GetLocation())));
-  //CHECK_RESULT(
-  //    GetBrDropKeepCount(default_target_depth, &drop_count, &keep_count));
-  //CHECK_RESULT(
-  //    validator_.GetCatchCount(default_target_depth, &catch_drop_count));
-  //// The default case doesn't need a fixed size, since it is never jumped over.
-  //istream_.EmitDropKeep(drop_count, keep_count);
-  //istream_.Emit(Opcode::InterpCatchDrop, catch_drop_count);
-  //EmitBr(default_target_depth, 0, 0, 0);
+  // for (Index i = 0; i < num_targets; ++i) {
+  //   Index depth = target_depths[i];
+  //   CHECK_RESULT(
+  //       validator_.OnBrTableTarget(GetLocation(), Var(depth,
+  //       GetLocation())));
+  //   CHECK_RESULT(GetBrDropKeepCount(depth, &drop_count, &keep_count));
+  //   CHECK_RESULT(validator_.GetCatchCount(depth, &catch_drop_count));
+  //   // Emit DropKeep directly (instead of using EmitDropKeep) so the
+  //   // instruction has a fixed size. Same for CatchDrop as well.
+  //   istream_.Emit(Opcode::InterpDropKeep, drop_count, keep_count);
+  //   istream_.Emit(Opcode::InterpCatchDrop, catch_drop_count);
+  //   EmitBr(depth, 0, 0, 0);
+  // }
+  // CHECK_RESULT(validator_.OnBrTableTarget(
+  //     GetLocation(), Var(default_target_depth, GetLocation())));
+  // CHECK_RESULT(
+  //     GetBrDropKeepCount(default_target_depth, &drop_count, &keep_count));
+  // CHECK_RESULT(
+  //     validator_.GetCatchCount(default_target_depth, &catch_drop_count));
+  //// The default case doesn't need a fixed size, since it is never jumped
+  ///over.
+  // istream_.EmitDropKeep(drop_count, keep_count);
+  // istream_.Emit(Opcode::InterpCatchDrop, catch_drop_count);
+  // EmitBr(default_target_depth, 0, 0, 0);
 
-  //CHECK_RESULT(validator_.EndBrTable(GetLocation()));
-  //return Result::Ok;
+  // CHECK_RESULT(validator_.EndBrTable(GetLocation()));
+  // return Result::Ok;
 
   //// from try
-  //u32 exn_stack_height;
-  //CHECK_RESULT(
-  //    validator_.GetCatchCount(label_stack_.size() - 1, &exn_stack_height));
-  //u32 value_stack_height = validator_.type_stack_size();
-  //CHECK_RESULT(validator_.OnTry(GetLocation(), sig_type));
+  // u32 exn_stack_height;
+  // CHECK_RESULT(
+  //     validator_.GetCatchCount(label_stack_.size() - 1, &exn_stack_height));
+  // u32 value_stack_height = validator_.type_stack_size();
+  // CHECK_RESULT(validator_.OnTry(GetLocation(), sig_type));
   //// Push a label that tracks mapping of exn -> catch
-  //PushLabel(LabelKind::Try, Istream::kInvalidOffset, Istream::kInvalidOffset,
-  //          func_->handlers.size());
-  //func_->handlers.push_back(HandlerDesc{HandlerKind::Catch,
-  //                                      istream_.end(),
-  //                                      Istream::kInvalidOffset,
-  //                                      {},
-  //                                      {Istream::kInvalidOffset},
-  //                                      value_stack_height,
-  //                                      exn_stack_height});
+  // PushLabel(LabelKind::Try, Istream::kInvalidOffset, Istream::kInvalidOffset,
+  //           func_->handlers.size());
+  // func_->handlers.push_back(HandlerDesc{HandlerKind::Catch,
+  //                                       istream_.end(),
+  //                                       Istream::kInvalidOffset,
+  //                                       {},
+  //                                       {Istream::kInvalidOffset},
+  //                                       value_stack_height,
+  //                                       exn_stack_height});
   return Result::Error;
 }
 

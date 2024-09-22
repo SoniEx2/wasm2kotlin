@@ -248,9 +248,9 @@ bool IsCatch(TokenType token_type) {
 }
 
 bool IsTryTableCatch(TokenTypePair pair) {
-  return pair[0] == TokenType::Lpar && (pair[1] == TokenType::Catch || pair[1] == TokenType::CatchAll
-         || pair[1] == TokenType::CatchRef
-	 || pair[1] == TokenType::CatchAllRef);
+  return pair[0] == TokenType::Lpar &&
+         (pair[1] == TokenType::Catch || pair[1] == TokenType::CatchAll ||
+          pair[1] == TokenType::CatchRef || pair[1] == TokenType::CatchAllRef);
 }
 
 bool IsModuleField(TokenTypePair pair) {
@@ -666,7 +666,9 @@ bool WastParser::PeekMatchExpr() {
 
 bool WastParser::PeekMatchRefType() {
   return (options_->features.function_references_enabled() &&
-         PeekMatchLpar(TokenType::Ref)) || (options_->features.exceptions_enabled() && PeekMatchLpar(TokenType::Ref));
+          PeekMatchLpar(TokenType::Ref)) ||
+         (options_->features.exceptions_enabled() &&
+          PeekMatchLpar(TokenType::Ref));
 }
 
 bool WastParser::Match(TokenType type) {
@@ -3305,7 +3307,6 @@ Result WastParser::ParseTryTableCatches(TryTableVector* catches) {
 
   return Result::Ok;
 }
-
 
 Result WastParser::ParseGlobalType(Global* global) {
   WABT_TRACE(ParseGlobalType);

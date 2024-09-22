@@ -1216,7 +1216,8 @@ Result SharedValidator::BeginTryTable(const Location& loc) {
   return result;
 }
 
-Result SharedValidator::OnTryTableCatch(const Location& loc, const TableCatch& catch_) {
+Result SharedValidator::OnTryTableCatch(const Location& loc,
+                                        const TableCatch& catch_) {
   Result result = Result::Ok;
   TagType tag_type;
   expr_loc_ = loc;
@@ -1226,7 +1227,8 @@ Result SharedValidator::OnTryTableCatch(const Location& loc, const TableCatch& c
   if (catch_.IsRef()) {
     tag_type.params.push_back(Type::ExnRef);
   }
-  result |= typechecker_.OnTryTableCatch(tag_type.params, catch_.target.index());
+  result |=
+      typechecker_.OnTryTableCatch(tag_type.params, catch_.target.index());
   return result;
 }
 
