@@ -1585,7 +1585,7 @@ Result BinaryReaderInterp::OnTryTableExpr(Type sig_type,
   // CHECK_RESULT(
   //     validator_.GetCatchCount(default_target_depth, &catch_drop_count));
   //// The default case doesn't need a fixed size, since it is never jumped
-  ///over.
+  /// over.
   // istream_.EmitDropKeep(drop_count, keep_count);
   // istream_.Emit(Opcode::InterpCatchDrop, catch_drop_count);
   // EmitBr(default_target_depth, 0, 0, 0);
