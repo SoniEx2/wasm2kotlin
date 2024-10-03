@@ -4065,8 +4065,8 @@ void CWriter::Write(const ExprList& exprs) {
 
         WriteThrow();
         // Stop processing this ExprList, since the following are unreachable.
-      }
         return;
+      }
 
       case ExprType::ThrowRef: {
         Write("if (", StackVar(0), ".tag == NULL) { TRAP(NULL_REF); }");
@@ -4075,8 +4075,8 @@ void CWriter::Write(const ExprList& exprs) {
         DropTypes(1);
         WriteThrow();
         // Stop processing this ExprList, since the following are unreachable.
-      }
         return;
+      }
 
       case ExprType::Rethrow: {
         const RethrowExpr* rethrow = cast<RethrowExpr>(&expr);

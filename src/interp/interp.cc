@@ -2746,9 +2746,7 @@ std::string Thread::TraceSource::Pick(Index index, Instr instr) {
 
     case ValueType::FuncRef:    reftype = "funcref"; break;
     case ValueType::ExternRef:  reftype = "externref"; break;
-    case ValueType::ExnRef:
-      reftype = "exnref";
-      break;
+    case ValueType::ExnRef:     reftype = "exnref"; break;
 
     default:
       WABT_UNREACHABLE;
