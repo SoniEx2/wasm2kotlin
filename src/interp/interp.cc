@@ -2744,11 +2744,11 @@ std::string Thread::TraceSource::Pick(Index index, Instr instr) {
                           v.u32(2), v.u32(3));
     }
 
-    // clang-format off
+      // clang-format off
     case ValueType::FuncRef:    reftype = "funcref"; break;
     case ValueType::ExternRef:  reftype = "externref"; break;
     case ValueType::ExnRef:     reftype = "exnref"; break;
-    // clang-format on
+      // clang-format on
 
     default:
       WABT_UNREACHABLE;
