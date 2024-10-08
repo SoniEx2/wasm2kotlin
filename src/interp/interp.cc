@@ -2609,6 +2609,7 @@ RunResult Thread::DoThrow(Exception::Ptr exn) {
   Tag::Ptr exn_tag{store_, exn->tag()};
   bool popped_frame = false;
   bool had_catch_all = false;
+  bool target_exnref = false;
 
   // DoThrow is responsible for unwinding the stack at the point at which an
   // exception is thrown, and also branching to the appropriate catch within
@@ -2646,6 +2647,7 @@ RunResult Thread::DoThrow(Exception::Ptr exn) {
             target_offset = _catch.offset;
             target_values = (*iter).values;
             target_exceptions = (*iter).exceptions;
+	    target_exnref = _catch.ref;
             goto found_handler;
           }
         }
@@ -2654,6 +2656,7 @@ RunResult Thread::DoThrow(Exception::Ptr exn) {
           target_values = (*iter).values;
           target_exceptions = (*iter).exceptions;
           had_catch_all = true;
+	  target_exnref = handler.catch_all_ref;
           goto found_handler;
         }
       }
@@ -2690,6 +2693,9 @@ found_handler:
   // Also push exception payload values if applicable.
   if (!had_catch_all) {
     PushValues(exn_tag->type().signature, exn->args());
+  }
+  if (target_exnref) {
+    Push(exn.ref());
   }
   return RunResult::Ok;
 }
