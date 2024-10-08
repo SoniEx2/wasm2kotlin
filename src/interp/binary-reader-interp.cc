@@ -1569,13 +1569,11 @@ Result BinaryReaderInterp::OnTryTableExpr(Type sig_type,
   // part of the frame.
   u32 value_stack_height = validator_.type_stack_size() + local_count_;
 
-  HandlerDesc desc = HandlerDesc{HandlerKind::Catch,
-                                 Istream::kInvalidOffset,
-                                 Istream::kInvalidOffset,
-                                 {},
-                                 {Istream::kInvalidOffset},
-                                 value_stack_height,
-                                 exn_stack_height};
+  HandlerDesc desc =
+      HandlerDesc{HandlerKind::Catch,        Istream::kInvalidOffset,
+                  Istream::kInvalidOffset,   {},
+                  {Istream::kInvalidOffset}, value_stack_height,
+                  exn_stack_height};
 
   istream_.Emit(Opcode::Br);
   auto offset = istream_.EmitFixupU32();
@@ -1597,7 +1595,8 @@ Result BinaryReaderInterp::OnTryTableExpr(Type sig_type,
       desc.catch_all_ref = catch_.IsRef();
       desc.catch_all_offset = istream_.end();
     } else {
-      desc.catches.push_back(CatchDesc{raw_catch.tag, istream_.end(), catch_.IsRef()});
+      desc.catches.push_back(
+          CatchDesc{raw_catch.tag, istream_.end(), catch_.IsRef()});
     }
     // we can't use GetBrDropKeepCount because we're not in a real block.
     SharedValidator::Label* vlabel;

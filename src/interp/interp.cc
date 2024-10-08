@@ -2647,7 +2647,7 @@ RunResult Thread::DoThrow(Exception::Ptr exn) {
             target_offset = _catch.offset;
             target_values = (*iter).values;
             target_exceptions = (*iter).exceptions;
-	    target_exnref = _catch.ref;
+            target_exnref = _catch.ref;
             goto found_handler;
           }
         }
@@ -2656,7 +2656,7 @@ RunResult Thread::DoThrow(Exception::Ptr exn) {
           target_values = (*iter).values;
           target_exceptions = (*iter).exceptions;
           had_catch_all = true;
-	  target_exnref = handler.catch_all_ref;
+          target_exnref = handler.catch_all_ref;
           goto found_handler;
         }
       }
