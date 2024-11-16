@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright 2020 Soni L.
+# Copyright 2020, 2024 Soni L.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -87,6 +87,12 @@ def MangleName(s):
     return result
 
 
+def OutDirToPackage(out_dir):
+    # run-tests.py converts \ to /
+    parts = out_dir.split("/")
+    return "wabt.spec_test." + ".".join(MangleName(part) for part in parts)
+
+
 replacement = {}
 replacement['"'] = '\\"'
 replacement['$'] = '\\$'
@@ -109,13 +115,14 @@ def IsModuleCommand(command):
             command['type'] == 'assert_uninstantiable')
 
 
-class CWriter(object):
+class KotlinWriter(object):
 
     def __init__(self, spec_json, prefix, out_file, out_dir):
         self.source_filename = os.path.basename(spec_json['source_filename'])
         self.commands = spec_json['commands']
         self.out_file = out_file
         self.out_dir = out_dir
+        self.package = OutDirToPackage(out_dir)
         self.prefix = prefix
         self.module_idx = 0
         self.module_name_to_idx = {}
@@ -125,7 +132,7 @@ class CWriter(object):
 
     def Write(self):
         self.out_file.write("@file:JvmName(\"SpecTestMain\")\n")
-        self.out_file.write("package wabt.spec_test\n")
+        self.out_file.write("package " + self.package + "\n")
         self._MaybeWriteDummyModule()
         self._CacheModulePrefixes()
         self.out_file.write(self.prefix)
@@ -330,8 +337,8 @@ def main(args):
                 prefix = prefix_file.read() + '\n'
 
         output = io.StringIO()
-        cwriter = CWriter(spec_json, prefix, output, out_dir)
-        cwriter.Write()
+        ktwriter = KotlinWriter(spec_json, prefix, output, out_dir)
+        ktwriter.Write()
 
         main_filename = utils.ChangeExt(json_file_path, '_main.kt')
         with open(main_filename, 'w', encoding='utf-8') as out_main_file:
@@ -342,11 +349,11 @@ def main(args):
         # Compile wasm-rt-impl.
         kotlin_filenames.append(os.path.join(options.wasmrt_dir, 'wasm_rt_impl.kt'))
 
-        for i, wasm_filename in enumerate(cwriter.GetModuleFilenames()):
+        for i, wasm_filename in enumerate(ktwriter.GetModuleFilenames()):
             wasm_filename = os.path.join(out_dir, wasm_filename)
             kotlin_filename = utils.ChangeExt(wasm_filename, '.kt')
-            prefix = cwriter.GetModulePrefix(i)
-            wasm2kotlin.RunWithArgs(wasm_filename, '-p', 'wabt.spec_test', '-c', prefix, '-o', kotlin_filename)
+            prefix = ktwriter.GetModulePrefix(i)
+            wasm2kotlin.RunWithArgs(wasm_filename, '-p', ktwriter.package, '-c', prefix, '-o', kotlin_filename)
             if options.compile:
                 kotlin_filenames.append(kotlin_filename)
 
@@ -355,7 +362,7 @@ def main(args):
             main_jar = Compile(kotlinc, utils.ChangeExt(main_kt, ".jar"), kotlin_filenames + [main_kt])
 
             if options.run:
-                kotlin.RunWithArgs("-J-ea", "-classpath", main_jar, "wabt.spec_test.SpecTestMain")
+                kotlin.RunWithArgs("-J-ea", "-classpath", main_jar, ktwriter.package + ".SpecTestMain")
 
     return 0
 

@@ -1,6 +1,6 @@
 // these are written by the test runner
 //@file:JvmName("SpecTestMain")
-//package wabt.spec_test
+//package wabt.spec_test.Z_path.Z_to.Z_test
 
 import kotlin.text.StringBuilder
 import java.nio.ByteBuffer
@@ -361,7 +361,8 @@ class Runner(val moduleRegistry: wasm_rt_impl.ModuleRegistry) {
         val prefix = command.get("prefix")
         if (prefix !is Bytes) return
         val sprefix = prefix.toString()
-        val cls = Class.forName("wabt.spec_test." + sprefix).kotlin
+        val pkg = Runner::class.java.getPackage().getName()
+        val cls = Class.forName(pkg + "." + sprefix).kotlin
         try {
             cls.primaryConstructor!!.call(this.moduleRegistry, sprefix)
         } catch (e: java.lang.reflect.InvocationTargetException) {
