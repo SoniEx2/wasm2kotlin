@@ -1,0 +1,5 @@
+;;; TOOL: run-spec-luajit
+;;; STDIN_FILE: third_party/testsuite/endianness.wast
+(;; STDOUT ;;;
+69/69 tests passed.
+;;; STDOUT ;;)
