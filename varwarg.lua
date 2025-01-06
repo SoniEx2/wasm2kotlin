@@ -7,6 +7,8 @@ if jit then
 end
 if not bit then require "bit" end
 
+local band = bit.band
+local bor = bit.bor
 local ssub = string.sub
 local schar = string.char
 local sbyte = string.byte
@@ -18,6 +20,41 @@ local select = select
 local load, loadstring = nil
 
 local M = {}
+
+local function decodeu32(uleb128)
+    -- TODO optimize
+    local b0, b1, b2, b3, b4 = sbyte(uleb128, 1, 5)
+    b1 = b1 or 0
+    b2 = b2 or 0
+    b3 = b3 or 0
+    b4 = b4 or 0
+    b0 = band(b0, 127)
+    b1 = band(b1, 127)
+    b2 = band(b2, 127)
+    b3 = band(b3, 127)
+    b4 = band(b4, 127)
+    b0 = blshift(b0, 0)
+    b1 = blshift(b1, 7)
+    b2 = blshift(b2, 14)
+    b3 = blshift(b3, 21)
+    b4 = blshift(b4, 28)
+    return bor(b0, b1, b2, b3, b4)
+end
+
+local function skipbuflen(state, len)
+    local buf = state.buf
+    while len - #buf > 0 do
+        len = len - #buf
+        local extra = state.reader()
+        if not extra or extra == "" then
+            return nil
+        end
+        buf = extra
+        state.buf = buf
+    end
+    state.buf = ssub(buf, len + 1)
+    return true
+end
 
 local function checkbuflen(state, len)
     local buf = state.buf
@@ -60,9 +97,11 @@ local function checkuleb128(state, maxlen)
     until (not byte) or byte < 128 or maxlen <= 0
     if byte then
         if byte < blshift(1, min(7, maxlen + 7)) then
-            return checkbuflen(target)
+            return checkbuflen(state, target - 1)
+        elseif byte < 128 then
+            return nil, "integer too large"
         else
-            return nil
+            return nil, "integer representation too long"
         end
     end
     -- slow path
@@ -73,6 +112,7 @@ local function checksleb128(state, maxlen)
     -- avoid using checkbuflen if we don't strictly have to
     local buf = state.buf
     sbyte(buf, 1, 1)
+    error("NYI")
 end
 
 local fast_drop_keep = {
@@ -241,17 +281,33 @@ local function loadwasm(reader)
         if not section then
             return nil, "malformed section id"
         end
-        if section ~= "custom" then
+        if section == "custom" then
+            local len, err = checkuleb128(state, 32)
+            -- no use for custom sections at this time
+            if not len then
+                return len, err
+            end
+            len = decodeu32(len)
+            local ok = skipbuflen(state, len)
+            if not ok then
+                return nil, "unexpected end"
+            end
+        else
             if section_order[section] <= last_section then
                 if section_order[section] == last_section then
                     return nil, "duplicate section"
                 end
                 return nil, "section out of order"
             end
+            local len = checkuleb128(state, 32)
+            if not len then
+                return len, err
+            end
+            len = decodeu32(len)
             error("NYI")
         end
     end
-    -- check postconditions
+    -- TODO check postconditions
     return m
 end
 
