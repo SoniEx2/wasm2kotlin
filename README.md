@@ -1,3 +1,7 @@
+# wasm2kotlin is deprecated!
+
+wasm2kotlin is no longer actively maintained. use [chicory](https://chicory.dev) instead.
+
 # wasm2kotlin
 
 wasm2kotlin is a fork of wabt/wasm2c for the JVM. It attempts to track upstream
