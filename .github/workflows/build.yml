@@ -221,16 +221,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [s390x]
+        arch: [s390x, mips64el]
     services: # still faster on debian...
       distcc:
         image: debian:latest
-        options: --health-cmd distccmon-text --health-interval 5s --health-start-period 5m debian:latest bash -c "apt-get update && apt-get install -y g++-s390x-linux-gnu distcc && distccd --daemon --no-detach"
+        options: --health-cmd distccmon-text --health-interval 5s --health-start-period 5m debian:latest bash -c "apt-get update && apt-get install -y g++-s390x-linux-gnu g++-mips64el-linux-gnuabi64 distcc && distccd --daemon --no-detach"
         ports:
           - 3632:3632
-    env:
-      QEMU_LD_PREFIX: /usr/${{matrix.arch}}-linux-gnu/
     steps:
+    - name: setup env (s390x)
+      run: echo "ARCH_TRIPLE=${{matrix.arch}}-linux-gnu" >> $GITHUB_ENV
+      if: matrix.arch == 's390x'
+    - name: setup env (mips64el)
+      run: echo "ARCH_TRIPLE=${{matrix.arch}}-linux-gnuabi64" >> $GITHUB_ENV
+      if: matrix.arch == 'mips64el'
+    - name: setup qemu ld prefix
+      run: echo "QEMU_LD_PREFIX=/usr/$ARCH_TRIPLE/" >> $GITHUB_ENV
     - uses: actions/setup-python@v1
       with:
         python-version: '3.x'
@@ -245,13 +251,13 @@ jobs:
     - name: install ninja
       run: sudo apt-get install ninja-build
     - name: install the toolchain
-      run: sudo apt-get install g++-${{matrix.arch}}-linux-gnu
+      run: sudo apt-get install g++-$ARCH_TRIPLE
     - name: install distcc
       run: sudo apt-get install distcc
     - name: mkdir distcc symlinks
       run: sudo mkdir -p /opt/bin/distcc_symlinks
     - name: distcc symlink
-      run: sudo ln -s /usr/bin/distcc /opt/bin/distcc_symlinks/${{matrix.arch}}-linux-gnu-gcc # only CC is needed
+      run: sudo ln -s /usr/bin/distcc /opt/bin/distcc_symlinks/$ARCH_TRIPLE-gcc # only CC is needed
     - name: cmake
       run: cmake -S . -B out -G Ninja -DCMAKE_TOOLCHAIN_FILE=../scripts/TC-${{matrix.arch}}.cmake -DWITH_WASI=ON -DWERROR=OFF -Werror=dev -Wno-deprecated
     - name: build
@@ -260,5 +266,8 @@ jobs:
       run: python ./scripts/check_clean.py
     - name: unittests
       run: cmake --build out --target run-unittests
+    - name: c-api-tests
+      run: cmake --build out --target run-c-api-tests
+      if: matrix.arch != 's390x'
     - name: tests
       run: cmake --build out --target run-tests
