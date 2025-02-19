@@ -225,7 +225,7 @@ jobs:
     services: # still faster on debian...
       distcc:
         image: debian:latest
-        options: --health-cmd distccmon-text --health-interval 5s --health-start-period 5m debian:latest bash -c "apt-get update && apt-get install -y g++-s390x-linux-gnu g++-mips64el-linux-gnuabi64 distcc && distccd --daemon --no-detach"
+        options: --health-cmd distccmon-text --health-interval 5s --health-start-period 5m debian:latest bash -c "apt-get update && apt-get install -y g++-s390x-linux-gnu distcc && distccd --daemon --no-detach"
         ports:
           - 3632:3632
     steps:
@@ -244,10 +244,7 @@ jobs:
       with:
         submodules: true
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v2
-      with:
-        platforms: ${{matrix.arch}}
-        image: "tonistiigi/binfmt:master"
+      run: sudo apt-get install qemu-user-binfmt
     - name: install ninja
       run: sudo apt-get install ninja-build
     - name: install the toolchain
