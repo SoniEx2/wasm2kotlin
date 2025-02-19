@@ -238,10 +238,7 @@ jobs:
       with:
         submodules: true
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v2
-      with:
-        platforms: ${{matrix.arch}}
-        image: "tonistiigi/binfmt:master"
+      run: sudo apt-get install qemu-user-binfmt
     - name: install ninja
       run: sudo apt-get install ninja-build
     - name: install the toolchain
